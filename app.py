@@ -102,25 +102,8 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error reading PDF: {str(e)}")
         return None, None, None
 
-def find_sync_point(words1, words2, min_match_length=5):
-    """Find where two word sequences synchronize (same words in a row)"""
-    # Try to find a sequence of matching words
-    for i in range(len(words1)):
-        for j in range(len(words2)):
-            # Check if we have a match of min_match_length consecutive words
-            match_count = 0
-            for k in range(min(len(words1) - i, len(words2) - j)):
-                if words1[i + k] == words2[j + k]:
-                    match_count += 1
-                    if match_count >= min_match_length:
-                        return i, j  # Return the start indices of synchronized section
-                else:
-                    break
-    
-    return None, None  # No sync point found
-
 def find_word_level_differences(text1, text2):
-    """Find word-level differences with smart synchronization"""
+    """Find word-level differences using difflib's sequence matching at word level"""
     # Convert to word lists
     words1 = re.findall(r'\S+', text1)
     words2 = re.findall(r'\S+', text2)
@@ -128,63 +111,46 @@ def find_word_level_differences(text1, text2):
     diff_words1 = set()
     diff_words2 = set()
     
-    # Find initial sync point
-    sync_idx1, sync_idx2 = find_sync_point(words1, words2, min_match_length=5)
+    # Use SequenceMatcher at word level for better alignment
+    matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
     
+    sync_blocks = []
+    total_matching_words = 0
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # Words are identical, don't highlight
+            total_matching_words += (i2 - i1)
+            if not sync_blocks:  # Record first sync block
+                sync_blocks.append({
+                    'start1': i1,
+                    'start2': j1,
+                    'word': words1[i1] if i1 < len(words1) else None
+                })
+        elif tag == 'replace':
+            # Words differ - highlight both sides
+            diff_words1.update(words1[i1:i2])
+            diff_words2.update(words2[j1:j2])
+        elif tag == 'delete':
+            # Words only in text1
+            diff_words1.update(words1[i1:i2])
+        elif tag == 'insert':
+            # Words only in text2
+            diff_words2.update(words2[j1:j2])
+    
+    # Create sync info
+    first_sync = sync_blocks[0] if sync_blocks else None
     sync_info = {
-        'sync_found': sync_idx1 is not None,
-        'sync_word1': words1[sync_idx1] if sync_idx1 is not None and sync_idx1 < len(words1) else None,
-        'sync_idx1': sync_idx1,
-        'sync_idx2': sync_idx2,
-        'words_before_sync1': sync_idx1 if sync_idx1 is not None else 0,
-        'words_before_sync2': sync_idx2 if sync_idx2 is not None else 0
+        'sync_found': first_sync is not None,
+        'sync_word1': first_sync['word'] if first_sync else None,
+        'sync_idx1': first_sync['start1'] if first_sync else None,
+        'sync_idx2': first_sync['start2'] if first_sync else None,
+        'words_before_sync1': first_sync['start1'] if first_sync else 0,
+        'words_before_sync2': first_sync['start2'] if first_sync else 0,
+        'total_matching': total_matching_words,
+        'total_words1': len(words1),
+        'total_words2': len(words2)
     }
-    
-    if sync_idx1 is None:
-        # No sync point found - documents are completely different
-        # Highlight everything
-        diff_words1.update(words1)
-        diff_words2.update(words2)
-        return diff_words1, diff_words2, sync_info
-    
-    # Highlight everything before sync point as different
-    diff_words1.update(words1[:sync_idx1])
-    diff_words2.update(words2[:sync_idx2])
-    
-    # Now compare from sync point onwards using sliding window approach
-    i = sync_idx1
-    j = sync_idx2
-    
-    while i < len(words1) or j < len(words2):
-        # Check if current words match
-        if i < len(words1) and j < len(words2) and words1[i] == words2[j]:
-            # Words match, move both forward
-            i += 1
-            j += 1
-        else:
-            # Words don't match - try to find next sync point
-            # Look ahead to see where they resync
-            next_sync1, next_sync2 = find_sync_point(
-                words1[i:i+50] if i < len(words1) else [], 
-                words2[j:j+50] if j < len(words2) else [],
-                min_match_length=3
-            )
-            
-            if next_sync1 is not None:
-                # Found a resync point nearby
-                # Mark everything in between as different
-                diff_words1.update(words1[i:i+next_sync1])
-                diff_words2.update(words2[j:j+next_sync2])
-                i += next_sync1
-                j += next_sync2
-            else:
-                # No nearby sync point - mark remaining words as different
-                if i < len(words1):
-                    diff_words1.add(words1[i])
-                    i += 1
-                if j < len(words2):
-                    diff_words2.add(words2[j])
-                    j += 1
     
     return diff_words1, diff_words2, sync_info
 
@@ -371,10 +337,13 @@ if doc1_file and doc2_file:
         # Display sync information
         sync_info = results.get('sync_info', {})
         if sync_info.get('sync_found'):
-            st.info(f"🔄 **Synchronization Point Found**: Starting comparison from word '{sync_info['sync_word1']}' "
-                   f"(skipped {sync_info['words_before_sync1']} words in Doc 1, {sync_info['words_before_sync2']} words in Doc 2)")
+            match_percentage = (sync_info.get('total_matching', 0) / max(sync_info.get('total_words1', 1), sync_info.get('total_words2', 1))) * 100
+            if sync_info['words_before_sync1'] > 0 or sync_info['words_before_sync2'] > 0:
+                st.info(f"🔄 **First matching content at**: '{sync_info['sync_word1']}' "
+                       f"(position {sync_info['sync_idx1']} in Doc 1, position {sync_info['sync_idx2']} in Doc 2)")
+            st.info(f"📊 **Alignment**: {sync_info.get('total_matching', 0)} words match ({match_percentage:.1f}% alignment)")
         else:
-            st.warning("⚠️ No synchronization point found - documents appear completely different")
+            st.warning("⚠️ No matching content found - documents appear completely different")
         
         # Display statistics
         col_stat1, col_stat2, col_stat3 = st.columns(3)
