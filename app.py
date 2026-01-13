@@ -97,23 +97,41 @@ def extract_text_from_pdf(pdf_file):
         return None, None, None
 
 def find_word_level_differences(text1, text2):
-    """Find word-level differences using SequenceMatcher"""
-    # Tokenize into words while preserving context
-    words1 = re.findall(r'\S+', text1)
-    words2 = re.findall(r'\S+', text2)
+    """Find word-level differences by comparing line by line"""
+    lines1 = text1.split('\n')
+    lines2 = text2.split('\n')
     
-    matcher = difflib.SequenceMatcher(None, words1, words2)
+    # Use difflib to find matching and non-matching lines
+    matcher = difflib.SequenceMatcher(None, lines1, lines2)
     
     diff_words1 = set()
     diff_words2 = set()
     
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ['replace', 'delete']:
-            # Words only in doc1 or replaced
-            diff_words1.update(words1[i1:i2])
-        if tag in ['replace', 'insert']:
-            # Words only in doc2 or replaced
-            diff_words2.update(words2[j1:j2])
+        if tag == 'equal':
+            # Lines are identical, skip
+            continue
+        elif tag == 'replace':
+            # Lines differ - find word differences within these lines
+            for line1, line2 in zip(lines1[i1:i2], lines2[j1:j2]):
+                words1 = re.findall(r'\S+', line1)
+                words2 = re.findall(r'\S+', line2)
+                
+                # Find word-level diffs within this line pair
+                word_matcher = difflib.SequenceMatcher(None, words1, words2)
+                for wtag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
+                    if wtag in ['replace', 'delete']:
+                        diff_words1.update(words1[wi1:wi2])
+                    if wtag in ['replace', 'insert']:
+                        diff_words2.update(words2[wj1:wj2])
+        elif tag == 'delete':
+            # Lines only in text1
+            for line in lines1[i1:i2]:
+                diff_words1.update(re.findall(r'\S+', line))
+        elif tag == 'insert':
+            # Lines only in text2
+            for line in lines2[j1:j2]:
+                diff_words2.update(re.findall(r'\S+', line))
     
     return diff_words1, diff_words2
 
