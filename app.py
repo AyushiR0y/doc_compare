@@ -164,8 +164,9 @@ def find_word_level_differences(text1, text2):
     words1 = re.findall(r'\S+', text1)
     words2 = re.findall(r'\S+', text2)
     
-    diff_words1 = set()
-    diff_words2 = set()
+    # Track indices of different words, not the words themselves
+    diff_indices1 = set()
+    diff_indices2 = set()
     
     # Use SequenceMatcher at word level for better alignment
     matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
@@ -184,15 +185,15 @@ def find_word_level_differences(text1, text2):
                     'word': words1[i1] if i1 < len(words1) else None
                 })
         elif tag == 'replace':
-            # Words differ - highlight both sides
-            diff_words1.update(words1[i1:i2])
-            diff_words2.update(words2[j1:j2])
+            # Words differ - mark these positions as different
+            diff_indices1.update(range(i1, i2))
+            diff_indices2.update(range(j1, j2))
         elif tag == 'delete':
             # Words only in text1
-            diff_words1.update(words1[i1:i2])
+            diff_indices1.update(range(i1, i2))
         elif tag == 'insert':
             # Words only in text2
-            diff_words2.update(words2[j1:j2])
+            diff_indices2.update(range(j1, j2))
     
     # Create sync info
     first_sync = sync_blocks[0] if sync_blocks else None
@@ -208,75 +209,103 @@ def find_word_level_differences(text1, text2):
         'total_words2': len(words2)
     }
     
-    return diff_words1, diff_words2, sync_info
+    # Return indices instead of word sets, along with the word lists
+    return diff_indices1, diff_indices2, words1, words2, sync_info
 
-def create_html_diff(text1, text2, diff_words1, diff_words2):
-    """Create HTML with word-level highlighting"""
-    def highlight_text(text, diff_words):
-        words = re.findall(r'\S+|\s+', text)
+def create_html_diff(text1, text2, diff_indices1, diff_indices2, words1, words2):
+    """Create HTML with word-level highlighting based on positions"""
+    def highlight_text(text, diff_indices, words):
+        text_words = re.findall(r'\S+|\s+', text)
         html_parts = []
+        word_index = 0
         
-        for word in words:
-            if word.strip() in diff_words:
-                html_parts.append(f'<span class="highlight">{word}</span>')
-            else:
-                html_parts.append(word)
+        for token in text_words:
+            if token.strip():  # It's a word
+                if word_index in diff_indices:
+                    html_parts.append(f'<span class="highlight">{token}</span>')
+                else:
+                    html_parts.append(token)
+                word_index += 1
+            else:  # It's whitespace
+                html_parts.append(token)
         
         return ''.join(html_parts)
     
-    html1 = highlight_text(text1, diff_words1)
-    html2 = highlight_text(text2, diff_words2)
+    html1 = highlight_text(text1, diff_indices1, words1)
+    html2 = highlight_text(text2, diff_indices2, words2)
     
     return html1, html2
 
-def highlight_pdf_words(doc, pages_data, diff_words):
-    """Highlight specific words in PDF"""
+def highlight_pdf_words(doc, pages_data, diff_indices, words_list):
+    """Highlight specific word positions in PDF"""
     highlighted_doc = fitz.open()
+    
+    # Build a mapping of word index to page and bbox
+    word_positions = []
+    for page_data in pages_data:
+        for word_info in page_data['words']:
+            word_positions.append({
+                'text': word_info['text'],
+                'bbox': word_info['bbox'],
+                'page': word_info['page']
+            })
     
     for page_num in range(len(doc)):
         page = doc[page_num]
         new_page = highlighted_doc.new_page(width=page.rect.width, height=page.rect.height)
         new_page.show_pdf_page(new_page.rect, doc, page_num)
         
-        page_data = pages_data[page_num] if page_num < len(pages_data) else None
-        if not page_data:
-            continue
-        
-        page_words = page_data['words']
-        
-        for word_info in page_words:
-            word_text = word_info['text']
-            
-            # Check if this exact word should be highlighted
-            if word_text in diff_words:
-                bbox = word_info['bbox']
-                rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-                
-                try:
-                    highlight = new_page.add_highlight_annot(rect)
-                    highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
-                    highlight.update()
-                except:
-                    pass
+        # Highlight words at the specified indices on this page
+        for word_idx in diff_indices:
+            if word_idx < len(word_positions):
+                word_pos = word_positions[word_idx]
+                if word_pos['page'] == page_num:
+                    bbox = word_pos['bbox']
+                    rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
+                    
+                    try:
+                        highlight = new_page.add_highlight_annot(rect)
+                        highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
+                        highlight.update()
+                    except:
+                        pass
     
     return highlighted_doc
 
-def highlight_word_doc(docx_file, diff_words):
-    """Highlight words in Word document"""
+def highlight_word_doc(docx_file, diff_indices, words_list):
+    """Highlight specific word positions in Word document"""
     from docx.shared import RGBColor
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
+    # Extract all runs with their word positions
+    run_word_map = []
+    current_word_idx = 0
+    
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
-            # Check if any diff word is in this run
-            for diff_word in diff_words:
-                if diff_word in run.text:
-                    # Highlight the run
-                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                    break
+            run_text = run.text
+            run_words = re.findall(r'\S+', run_text)
+            
+            # Map this run to its word indices
+            start_idx = current_word_idx
+            end_idx = current_word_idx + len(run_words)
+            
+            run_word_map.append({
+                'run': run,
+                'start_idx': start_idx,
+                'end_idx': end_idx,
+                'should_highlight': any(i in diff_indices for i in range(start_idx, end_idx))
+            })
+            
+            current_word_idx += len(run_words)
+    
+    # Apply highlighting
+    for run_info in run_word_map:
+        if run_info['should_highlight']:
+            run_info['run'].font.highlight_color = WD_COLOR_INDEX.YELLOW
     
     output = BytesIO()
     doc.save(output)
@@ -343,37 +372,39 @@ if doc1_file and doc2_file:
         
         if text1 and text2:
             with st.spinner("Finding word-level differences..."):
-                diff_words1, diff_words2, sync_info = find_word_level_differences(text1, text2)
-                html1, html2 = create_html_diff(text1, text2, diff_words1, diff_words2)
+                diff_indices1, diff_indices2, words1, words2, sync_info = find_word_level_differences(text1, text2)
+                html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2, words1, words2)
             
             with st.spinner("Generating highlighted documents..."):
                 # Generate highlighted versions
                 if is_pdf1:
-                    highlighted_doc1 = highlight_pdf_words(pdf_doc1, pages_data1, diff_words1)
+                    highlighted_doc1 = highlight_pdf_words(pdf_doc1, pages_data1, diff_indices1, words1)
                     pdf1_bytes = BytesIO()
                     highlighted_doc1.save(pdf1_bytes)
                     pdf1_bytes.seek(0)
                     highlighted_doc1.close()
                     pdf_doc1.close()
                 else:
-                    pdf1_bytes = highlight_word_doc(doc1_file, diff_words1)
+                    pdf1_bytes = highlight_word_doc(doc1_file, diff_indices1, words1)
                 
                 if is_pdf2:
-                    highlighted_doc2 = highlight_pdf_words(pdf_doc2, pages_data2, diff_words2)
+                    highlighted_doc2 = highlight_pdf_words(pdf_doc2, pages_data2, diff_indices2, words2)
                     pdf2_bytes = BytesIO()
                     highlighted_doc2.save(pdf2_bytes)
                     pdf2_bytes.seek(0)
                     highlighted_doc2.close()
                     pdf_doc2.close()
                 else:
-                    pdf2_bytes = highlight_word_doc(doc2_file, diff_words2)
+                    pdf2_bytes = highlight_word_doc(doc2_file, diff_indices2, words2)
             
             # Store results in session state
             st.session_state.results = {
                 'text1': text1,
                 'text2': text2,
-                'diff_words1': diff_words1,
-                'diff_words2': diff_words2,
+                'diff_indices1': diff_indices1,
+                'diff_indices2': diff_indices2,
+                'words1': words1,
+                'words2': words2,
                 'html1': html1,
                 'html2': html2,
                 'pdf1_bytes': pdf1_bytes,
@@ -412,7 +443,7 @@ if doc1_file and doc2_file:
             st.metric("Similarity", f"{similarity * 100:.1f}%")
         
         # Show statistics
-        st.info(f"🔍 Found **{len(results['diff_words1'])}** unique words in Doc 1 and **{len(results['diff_words2'])}** unique words in Doc 2")
+        st.info(f"🔍 Found **{len(results['diff_indices1'])}** different word positions in Doc 1 and **{len(results['diff_indices2'])}** different word positions in Doc 2")
         
         # Download buttons
         st.markdown("### Download Highlighted Documents")
@@ -454,15 +485,19 @@ if doc1_file and doc2_file:
         with st.expander("📋 Sample Differences (First 50)"):
             col_s1, col_s2 = st.columns(2)
             with col_s1:
-                st.markdown(f"**Unique to Doc 1: {len(results['diff_words1'])} words**")
-                sample1 = list(results['diff_words1'])[:50]
-                for word in sample1:
-                    st.text(f"'{word}'")
+                st.markdown(f"**Different words in Doc 1: {len(results['diff_indices1'])} positions**")
+                # Get actual words at these positions
+                sample_indices1 = sorted(list(results['diff_indices1']))[:50]
+                for idx in sample_indices1:
+                    if idx < len(results['words1']):
+                        st.text(f"Position {idx}: '{results['words1'][idx]}'")
             with col_s2:
-                st.markdown(f"**Unique to Doc 2: {len(results['diff_words2'])} words**")
-                sample2 = list(results['diff_words2'])[:50]
-                for word in sample2:
-                    st.text(f"'{word}'")
+                st.markdown(f"**Different words in Doc 2: {len(results['diff_indices2'])} positions**")
+                # Get actual words at these positions
+                sample_indices2 = sorted(list(results['diff_indices2']))[:50]
+                for idx in sample_indices2:
+                    if idx < len(results['words2']):
+                        st.text(f"Position {idx}: '{results['words2'][idx]}'")
         
         # Debug: Show first few lines of each document
         with st.expander("🔍 Debug: Document Analysis"):
