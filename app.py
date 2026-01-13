@@ -181,107 +181,134 @@ def extract_text_from_pdf(pdf_file):
         return None, None, None
 
 def find_word_level_differences(text1, text2, context_threshold=0.6, context_window=8):
-    """Find word-level differences using hybrid matching that handles layout differences"""
-    import streamlit as st
+    """Find actual content differences using sentence-aware alignment"""
     
-    # Convert to word lists
+    # Split into sentences first, then words
+    import re
+    
+    # Simple sentence splitter
+    def split_sentences(text):
+        # Split on sentence endings but keep the text
+        sentences = re.split(r'([.!?]+\s+|\n+)', text)
+        result = []
+        current = ""
+        for part in sentences:
+            current += part
+            if re.match(r'[.!?]+\s+|\n+', part) or part == sentences[-1]:
+                if current.strip():
+                    result.append(current.strip())
+                current = ""
+        return result if result else [text]
+    
+    sentences1 = split_sentences(text1)
+    sentences2 = split_sentences(text2)
+    
+    # Use SequenceMatcher on sentences to find which sentences differ
+    matcher = difflib.SequenceMatcher(None, sentences1, sentences2, autojunk=False)
+    
+    # Track which words come from different sentences
+    diff_indices1 = set()
+    diff_indices2 = set()
+    
+    # Convert to word lists for position tracking
     words1 = re.findall(r'\S+', text1)
     words2 = re.findall(r'\S+', text2)
     
-    diff_indices1 = set()
-    diff_indices2 = set()
-    matched_indices1 = set()
-    matched_indices2 = set()
+    # Build sentence-to-word-index mapping
+    word_to_sentence1 = {}
+    word_to_sentence2 = {}
     
-    # PASS 1: Quick exact sequence matching for well-aligned sections
-    matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
+    word_idx1 = 0
+    for sent_idx, sentence in enumerate(sentences1):
+        sent_words = re.findall(r'\S+', sentence)
+        for _ in sent_words:
+            if word_idx1 < len(words1):
+                word_to_sentence1[word_idx1] = sent_idx
+                word_idx1 += 1
+    
+    word_idx2 = 0
+    for sent_idx, sentence in enumerate(sentences2):
+        sent_words = re.findall(r'\S+', sentence)
+        for _ in sent_words:
+            if word_idx2 < len(words2):
+                word_to_sentence2[word_idx2] = sent_idx
+                word_idx2 += 1
+    
+    # Find different sentences
+    diff_sentences1 = set()
+    diff_sentences2 = set()
+    
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
-            # These sections match exactly - mark as matched
-            matched_indices1.update(range(i1, i2))
-            matched_indices2.update(range(j1, j2))
+            # Sentences match, but let's check if they're actually identical
+            for sent_idx in range(i1, i2):
+                if sent_idx < len(sentences1):
+                    s1 = sentences1[sent_idx].lower().strip()
+                    corresponding_idx = j1 + (sent_idx - i1)
+                    if corresponding_idx < len(sentences2):
+                        s2 = sentences2[corresponding_idx].lower().strip()
+                        # Do word-level diff within matching sentences
+                        if s1 != s2:
+                            words_s1 = re.findall(r'\S+', s1)
+                            words_s2 = re.findall(r'\S+', s2)
+                            word_matcher = difflib.SequenceMatcher(None, words_s1, words_s2)
+                            
+                            # Find word positions in original text
+                            sent_word_idx1 = sum(len(re.findall(r'\S+', sentences1[k])) for k in range(sent_idx))
+                            sent_word_idx2 = sum(len(re.findall(r'\S+', sentences2[k])) for k in range(corresponding_idx))
+                            
+                            for wtag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
+                                if wtag != 'equal':
+                                    for wi in range(wi1, wi2):
+                                        if sent_word_idx1 + wi < len(words1):
+                                            diff_indices1.add(sent_word_idx1 + wi)
+                                    for wj in range(wj1, wj2):
+                                        if sent_word_idx2 + wj < len(words2):
+                                            diff_indices2.add(sent_word_idx2 + wj)
+        
+        elif tag == 'replace':
+            # Sentences are different
+            diff_sentences1.update(range(i1, i2))
+            diff_sentences2.update(range(j1, j2))
+        
+        elif tag == 'delete':
+            # Sentences only in doc1
+            diff_sentences1.update(range(i1, i2))
+        
+        elif tag == 'insert':
+            # Sentences only in doc2
+            diff_sentences2.update(range(j1, j2))
     
-    # PASS 2: Context-based matching for unmatched words (handles reordering)
-    unmatched_words1 = [i for i in range(len(words1)) if i not in matched_indices1]
-    unmatched_words2 = [i for i in range(len(words2)) if i not in matched_indices2]
+    # Mark all words in different sentences
+    for word_idx, sent_idx in word_to_sentence1.items():
+        if sent_idx in diff_sentences1:
+            diff_indices1.add(word_idx)
     
-    # Create a reverse index for faster lookup
-    word2_positions = {}
-    for i2 in unmatched_words2:
-        word = words2[i2].lower()
-        if word not in word2_positions:
-            word2_positions[word] = []
-        word2_positions[word].append(i2)
-    
-    # Match unmatched words with context
-    for i1 in unmatched_words1:
-        word1 = words1[i1]
-        
-        # Find candidate positions in doc2
-        candidates = word2_positions.get(word1.lower(), [])
-        
-        if not candidates:
-            # Word doesn't exist in doc2 at all
-            diff_indices1.add(i1)
-            continue
-        
-        # Get context around this word in doc1
-        start_ctx = max(0, i1 - context_window)
-        end_ctx = min(len(words1), i1 + context_window + 1)
-        context1 = [w.lower() for w in words1[start_ctx:end_ctx]]
-        
-        # Find best matching candidate based on context
-        best_match = None
-        best_score = context_threshold  # Use configurable threshold
-        
-        for i2 in candidates:
-            if i2 in matched_indices2:
-                continue
-            
-            # Get context around candidate in doc2
-            start_ctx2 = max(0, i2 - context_window)
-            end_ctx2 = min(len(words2), i2 + context_window + 1)
-            context2 = [w.lower() for w in words2[start_ctx2:end_ctx2]]
-            
-            # Calculate context similarity
-            ctx_matcher = difflib.SequenceMatcher(None, context1, context2)
-            score = ctx_matcher.ratio()
-            
-            if score > best_score:
-                best_score = score
-                best_match = i2
-        
-        if best_match is not None:
-            # Found a good context match
-            matched_indices1.add(i1)
-            matched_indices2.add(best_match)
-        else:
-            # No good match found
-            diff_indices1.add(i1)
-    
-    # Any remaining unmatched words in doc2 are differences
-    for i2 in unmatched_words2:
-        if i2 not in matched_indices2:
-            diff_indices2.add(i2)
+    for word_idx, sent_idx in word_to_sentence2.items():
+        if sent_idx in diff_sentences2:
+            diff_indices2.add(word_idx)
     
     # Calculate statistics
-    total_matching_words = len(matched_indices1)
-    
-    # Create sync info
-    first_match = min(matched_indices1) if matched_indices1 else None
+    total_sentences1 = len(sentences1)
+    total_sentences2 = len(sentences2)
+    matching_sentences = total_sentences1 - len(diff_sentences1)
     
     sync_info = {
-        'sync_found': first_match is not None,
-        'sync_word1': words1[first_match] if first_match is not None else None,
-        'sync_idx1': first_match,
+        'sync_found': matching_sentences > 0,
+        'sync_word1': None,
+        'sync_idx1': None,
         'sync_idx2': None,
-        'words_before_sync1': first_match if first_match is not None else 0,
+        'words_before_sync1': 0,
         'words_before_sync2': 0,
-        'total_matching': total_matching_words,
+        'total_matching': matching_sentences,
         'total_words1': len(words1),
         'total_words2': len(words2),
-        'match_rate1': (len(matched_indices1) / len(words1) * 100) if words1 else 0,
-        'match_rate2': (len(matched_indices2) / len(words2) * 100) if words2 else 0
+        'match_rate1': (matching_sentences / total_sentences1 * 100) if total_sentences1 > 0 else 0,
+        'match_rate2': (matching_sentences / total_sentences2 * 100) if total_sentences2 > 0 else 0,
+        'unique_to_1': len(diff_sentences1),
+        'unique_to_2': len(diff_sentences2),
+        'total_sentences1': total_sentences1,
+        'total_sentences2': total_sentences2
     }
     
     return diff_indices1, diff_indices2, words1, words2, sync_info
@@ -503,17 +530,19 @@ if doc1_file and doc2_file:
         # Display sync information
         sync_info = results.get('sync_info', {})
         if sync_info.get('sync_found'):
-            match_rate1 = sync_info.get('match_rate1', 0)
-            match_rate2 = sync_info.get('match_rate2', 0)
-            st.info(f"📊 **Content Match**: {match_rate1:.1f}% of Doc 1 words found in Doc 2 | "
-                   f"{match_rate2:.1f}% of Doc 2 words found in Doc 1")
-            if match_rate1 < 80 or match_rate2 < 80:
-                st.warning("⚠️ Low match rate detected. This could indicate:\n"
-                          "- Documents have significantly different content\n"
-                          "- Different formatting/layout is causing alignment issues\n"
-                          "- One document has much more content than the other")
+            st.info(f"📊 **Sentence Analysis**: {sync_info.get('total_sentences1', 0)} sentences in Doc 1, "
+                   f"{sync_info.get('total_sentences2', 0)} sentences in Doc 2")
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.metric("Different/Added sentences in Doc 1", sync_info.get('unique_to_1', 0))
+            with col_info2:
+                st.metric("Different/Added sentences in Doc 2", sync_info.get('unique_to_2', 0))
+            
+            match_rate = min(sync_info.get('match_rate1', 0), sync_info.get('match_rate2', 0))
+            if match_rate < 70:
+                st.warning(f"⚠️ Only {match_rate:.0f}% sentence match. Documents have significant differences.")
         else:
-            st.warning("⚠️ No matching content found - documents appear completely different")
+            st.warning("⚠️ No matching sentences found - documents appear completely different")
         
         # Display statistics
         col_stat1, col_stat2, col_stat3 = st.columns(3)
