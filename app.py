@@ -155,60 +155,82 @@ def find_differences_smart(elements1, elements2):
     words1 = re.findall(r'\S+', text1)
     words2 = re.findall(r'\S+', text2)
     
-    diff_indices1 = set()
-    diff_indices2 = set()
+    # First pass: identify ONLY the actually different words
+    changed_words1 = set()
+    changed_words2 = set()
     
     matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
     
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag in ['replace', 'delete', 'insert']:
-            # Check context: if in table, mark all words. If in paragraph, mark sentence
-            if tag in ['replace', 'delete']:
-                for idx in range(i1, i2):
-                    if idx < len(word_to_element1):
-                        elem_idx = word_to_element1[idx]
-                        if elements1[elem_idx]['type'] == 'table':
-                            # Table: mark just this word
-                            diff_indices1.add(idx)
-                        else:
-                            # Paragraph: mark entire sentence containing this word
-                            sentence_indices = find_sentence_indices(words1, idx, word_to_element1, elem_idx)
-                            diff_indices1.update(sentence_indices)
-            
-            if tag in ['replace', 'insert']:
-                for idx in range(j1, j2):
-                    if idx < len(word_to_element2):
-                        elem_idx = word_to_element2[idx]
-                        if elements2[elem_idx]['type'] == 'table':
-                            # Table: mark just this word
-                            diff_indices2.add(idx)
-                        else:
-                            # Paragraph: mark entire sentence containing this word
-                            sentence_indices = find_sentence_indices(words2, idx, word_to_element2, elem_idx)
-                            diff_indices2.update(sentence_indices)
+        if tag == 'replace':
+            # Words differ in both documents
+            changed_words1.update(range(i1, i2))
+            changed_words2.update(range(j1, j2))
+        elif tag == 'delete':
+            # Words only in doc1
+            changed_words1.update(range(i1, i2))
+        elif tag == 'insert':
+            # Words only in doc2
+            changed_words2.update(range(j1, j2))
+        # 'equal' means the words match - don't mark anything
+    
+    # Second pass: expand to sentences ONLY for changed words in paragraphs
+    diff_indices1 = set()
+    diff_indices2 = set()
+    
+    for idx in changed_words1:
+        if idx < len(word_to_element1):
+            elem_idx = word_to_element1[idx]
+            if elements1[elem_idx]['type'] == 'table':
+                # Table: mark just this word
+                diff_indices1.add(idx)
+            else:
+                # Paragraph: mark entire sentence containing this changed word
+                sentence_indices = find_sentence_indices(words1, idx, word_to_element1, elem_idx)
+                diff_indices1.update(sentence_indices)
+    
+    for idx in changed_words2:
+        if idx < len(word_to_element2):
+            elem_idx = word_to_element2[idx]
+            if elements2[elem_idx]['type'] == 'table':
+                # Table: mark just this word
+                diff_indices2.add(idx)
+            else:
+                # Paragraph: mark entire sentence containing this changed word
+                sentence_indices = find_sentence_indices(words2, idx, word_to_element2, elem_idx)
+                diff_indices2.update(sentence_indices)
     
     return diff_indices1, diff_indices2, words1, words2
 
 def find_sentence_indices(words, changed_idx, word_to_element, elem_idx):
     """Find all word indices in the sentence containing the changed word"""
-    # Find sentence boundaries (., !, ?, or element boundary)
+    # Sentence boundaries: look for . ! ? followed by space/end, or element boundary
     start_idx = changed_idx
     end_idx = changed_idx
     
-    # Search backwards for sentence start
+    # Search backwards for sentence start (or beginning of element)
     for i in range(changed_idx - 1, -1, -1):
+        # Stop if we're in a different element
         if i >= len(word_to_element) or word_to_element[i] != elem_idx:
+            start_idx = i + 1
             break
-        if i < len(words) and words[i].rstrip('.!?') != words[i]:
-            break
+        # Stop if previous word ends with sentence terminator
+        if i > 0 and i - 1 < len(words):
+            prev_word = words[i - 1]
+            if re.search(r'[.!?]$', prev_word):
+                start_idx = i
+                break
         start_idx = i
     
     # Search forwards for sentence end
-    for i in range(changed_idx + 1, len(words)):
+    for i in range(changed_idx, len(words)):
+        # Stop if we're in a different element
         if i >= len(word_to_element) or word_to_element[i] != elem_idx:
+            end_idx = i - 1
             break
         end_idx = i
-        if words[i].rstrip('.!?') != words[i]:
+        # Stop after finding sentence terminator
+        if re.search(r'[.!?]$', words[i]):
             break
     
     return set(range(start_idx, end_idx + 1))
