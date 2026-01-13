@@ -48,50 +48,56 @@ def extract_text_from_pdf(pdf_file):
         
         for page_num in range(len(doc)):
             page = doc[page_num]
+            
+            # Method 1: Simple text extraction for comparison (prevents duplicates)
+            simple_text = page.get_text("text")
+            
+            # Method 2: Detailed extraction for highlighting
             blocks = page.get_text("dict")["blocks"]
             
             page_words = []
-            page_text_parts = []
             
             for block in blocks:
                 if "lines" in block:
                     for line in block["lines"]:
                         for span in line["spans"]:
-                            text = span["text"]
+                            text = span["text"].strip()
                             bbox = span["bbox"]
+                            
+                            if not text:
+                                continue
                             
                             # Split into words and track each
                             words = text.split()
-                            if not words:
-                                continue
                             
-                            char_width = (bbox[2] - bbox[0]) / len(text) if text else 0
+                            char_width = (bbox[2] - bbox[0]) / len(text) if len(text) > 0 else 0
                             x_pos = bbox[0]
                             
                             for word in words:
-                                word_bbox = [
-                                    x_pos,
-                                    bbox[1],
-                                    x_pos + len(word) * char_width,
-                                    bbox[3]
-                                ]
-                                page_words.append({
-                                    'text': word,
-                                    'bbox': word_bbox,
-                                    'page': page_num
-                                })
-                                page_text_parts.append(word)
-                                x_pos += (len(word) + 1) * char_width
+                                if word.strip():  # Only add non-empty words
+                                    word_bbox = [
+                                        x_pos,
+                                        bbox[1],
+                                        x_pos + len(word) * char_width,
+                                        bbox[3]
+                                    ]
+                                    page_words.append({
+                                        'text': word,
+                                        'bbox': word_bbox,
+                                        'page': page_num
+                                    })
+                                    x_pos += (len(word) + 1) * char_width
             
-            page_text = ' '.join(page_text_parts)
+            # Use simple text extraction for comparison to avoid duplicates
             pages_data.append({
                 'page_num': page_num,
-                'text': page_text,
+                'text': simple_text,
                 'words': page_words
             })
-            full_text.append(page_text)
+            full_text.append(simple_text)
         
-        return '\n'.join(full_text), pages_data, doc
+        # Join pages with double newline to preserve page breaks
+        return '\n\n'.join(full_text), pages_data, doc
     except Exception as e:
         st.error(f"Error reading PDF: {str(e)}")
         return None, None, None
