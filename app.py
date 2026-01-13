@@ -22,19 +22,75 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def extract_text_from_word(docx_file):
-    """Extract text from Word document"""
+    """Extract text from Word document including tables, headers, footers"""
     try:
         docx_file.seek(0)
         doc = Document(docx_file)
         
-        paragraphs = []
-        for para in doc.paragraphs:
-            if para.text.strip():
-                paragraphs.append(para.text.strip())
+        all_text = []
+        seen_text = set()
         
-        return '\n'.join(paragraphs)
+        # Method 1: Extract text from main document body (paragraphs and tables in order)
+        for element in doc.element.body:
+            # Check if it's a paragraph
+            if element.tag.endswith('p'):
+                for para in doc.paragraphs:
+                    if para._element == element:
+                        text = para.text.strip()
+                        if text and text not in seen_text:
+                            all_text.append(text)
+                            seen_text.add(text)
+                        break
+            # Check if it's a table
+            elif element.tag.endswith('tbl'):
+                for table in doc.tables:
+                    if table._element == element:
+                        for row in table.rows:
+                            row_text = []
+                            for cell in row.cells:
+                                cell_text = cell.text.strip()
+                                if cell_text:
+                                    row_text.append(cell_text)
+                            if row_text:
+                                combined_row = ' '.join(row_text)
+                                if combined_row not in seen_text:
+                                    all_text.append(combined_row)
+                                    seen_text.add(combined_row)
+                        break
+        
+        # If the above didn't work (fallback to simple extraction)
+        if len(all_text) == 0:
+            # Simple paragraph extraction
+            for para in doc.paragraphs:
+                text = para.text.strip()
+                if text:
+                    all_text.append(text)
+            
+            # Table extraction
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        cell_text = cell.text.strip()
+                        if cell_text:
+                            row_text.append(cell_text)
+                    if row_text:
+                        all_text.append(' '.join(row_text))
+        
+        extracted_text = '\n'.join(all_text)
+        
+        # Debug: show what was extracted
+        word_count = len(re.findall(r'\S+', extracted_text))
+        if len(all_text) == 0:
+            st.warning("⚠️ No text extracted from Word document. The document might be empty or use unsupported formatting.")
+        elif word_count < 10:
+            st.warning(f"⚠️ Only {word_count} words extracted from Word document. Check the debug section to verify extraction.")
+        
+        return extracted_text
     except Exception as e:
         st.error(f"Error reading Word document: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 def extract_text_from_pdf(pdf_file):
@@ -409,15 +465,27 @@ if doc1_file and doc2_file:
                     st.text(f"'{word}'")
         
         # Debug: Show first few lines of each document
-        with st.expander("🔍 Debug: First 10 lines of each document"):
+        with st.expander("🔍 Debug: Document Analysis"):
             col_d1, col_d2 = st.columns(2)
             with col_d1:
-                st.markdown("**Document 1 (first 10 lines):**")
+                st.markdown("**Document 1 Analysis:**")
+                words1 = re.findall(r'\S+', results['text1'])
+                st.text(f"Total words extracted: {len(words1)}")
+                st.text(f"Total characters: {len(results['text1'])}")
+                st.markdown("**First 20 words:**")
+                st.text(' '.join(words1[:20]))
+                st.markdown("**First 10 lines:**")
                 lines1 = results['text1'].split('\n')[:10]
                 for i, line in enumerate(lines1):
                     st.text(f"{i+1}: {line[:100]}")
             with col_d2:
-                st.markdown("**Document 2 (first 10 lines):**")
+                st.markdown("**Document 2 Analysis:**")
+                words2 = re.findall(r'\S+', results['text2'])
+                st.text(f"Total words extracted: {len(words2)}")
+                st.text(f"Total characters: {len(results['text2'])}")
+                st.markdown("**First 20 words:**")
+                st.text(' '.join(words2[:20]))
+                st.markdown("**First 10 lines:**")
                 lines2 = results['text2'].split('\n')[:10]
                 for i, line in enumerate(lines2):
                     st.text(f"{i+1}: {line[:100]}")
