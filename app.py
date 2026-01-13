@@ -102,44 +102,91 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error reading PDF: {str(e)}")
         return None, None, None
 
-def find_word_level_differences(text1, text2):
-    """Find word-level differences by comparing line by line"""
-    lines1 = text1.split('\n')
-    lines2 = text2.split('\n')
+def find_sync_point(words1, words2, min_match_length=5):
+    """Find where two word sequences synchronize (same words in a row)"""
+    # Try to find a sequence of matching words
+    for i in range(len(words1)):
+        for j in range(len(words2)):
+            # Check if we have a match of min_match_length consecutive words
+            match_count = 0
+            for k in range(min(len(words1) - i, len(words2) - j)):
+                if words1[i + k] == words2[j + k]:
+                    match_count += 1
+                    if match_count >= min_match_length:
+                        return i, j  # Return the start indices of synchronized section
+                else:
+                    break
     
-    # Use difflib to find matching and non-matching lines
-    matcher = difflib.SequenceMatcher(None, lines1, lines2)
+    return None, None  # No sync point found
+
+def find_word_level_differences(text1, text2):
+    """Find word-level differences with smart synchronization"""
+    # Convert to word lists
+    words1 = re.findall(r'\S+', text1)
+    words2 = re.findall(r'\S+', text2)
     
     diff_words1 = set()
     diff_words2 = set()
     
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == 'equal':
-            # Lines are identical, skip
-            continue
-        elif tag == 'replace':
-            # Lines differ - find word differences within these lines
-            for line1, line2 in zip(lines1[i1:i2], lines2[j1:j2]):
-                words1 = re.findall(r'\S+', line1)
-                words2 = re.findall(r'\S+', line2)
-                
-                # Find word-level diffs within this line pair
-                word_matcher = difflib.SequenceMatcher(None, words1, words2)
-                for wtag, wi1, wi2, wj1, wj2 in word_matcher.get_opcodes():
-                    if wtag in ['replace', 'delete']:
-                        diff_words1.update(words1[wi1:wi2])
-                    if wtag in ['replace', 'insert']:
-                        diff_words2.update(words2[wj1:wj2])
-        elif tag == 'delete':
-            # Lines only in text1
-            for line in lines1[i1:i2]:
-                diff_words1.update(re.findall(r'\S+', line))
-        elif tag == 'insert':
-            # Lines only in text2
-            for line in lines2[j1:j2]:
-                diff_words2.update(re.findall(r'\S+', line))
+    # Find initial sync point
+    sync_idx1, sync_idx2 = find_sync_point(words1, words2, min_match_length=5)
     
-    return diff_words1, diff_words2
+    sync_info = {
+        'sync_found': sync_idx1 is not None,
+        'sync_word1': words1[sync_idx1] if sync_idx1 is not None and sync_idx1 < len(words1) else None,
+        'sync_idx1': sync_idx1,
+        'sync_idx2': sync_idx2,
+        'words_before_sync1': sync_idx1 if sync_idx1 is not None else 0,
+        'words_before_sync2': sync_idx2 if sync_idx2 is not None else 0
+    }
+    
+    if sync_idx1 is None:
+        # No sync point found - documents are completely different
+        # Highlight everything
+        diff_words1.update(words1)
+        diff_words2.update(words2)
+        return diff_words1, diff_words2, sync_info
+    
+    # Highlight everything before sync point as different
+    diff_words1.update(words1[:sync_idx1])
+    diff_words2.update(words2[:sync_idx2])
+    
+    # Now compare from sync point onwards using sliding window approach
+    i = sync_idx1
+    j = sync_idx2
+    
+    while i < len(words1) or j < len(words2):
+        # Check if current words match
+        if i < len(words1) and j < len(words2) and words1[i] == words2[j]:
+            # Words match, move both forward
+            i += 1
+            j += 1
+        else:
+            # Words don't match - try to find next sync point
+            # Look ahead to see where they resync
+            next_sync1, next_sync2 = find_sync_point(
+                words1[i:i+50] if i < len(words1) else [], 
+                words2[j:j+50] if j < len(words2) else [],
+                min_match_length=3
+            )
+            
+            if next_sync1 is not None:
+                # Found a resync point nearby
+                # Mark everything in between as different
+                diff_words1.update(words1[i:i+next_sync1])
+                diff_words2.update(words2[j:j+next_sync2])
+                i += next_sync1
+                j += next_sync2
+            else:
+                # No nearby sync point - mark remaining words as different
+                if i < len(words1):
+                    diff_words1.add(words1[i])
+                    i += 1
+                if j < len(words2):
+                    diff_words2.add(words2[j])
+                    j += 1
+    
+    return diff_words1, diff_words2, sync_info
 
 def create_html_diff(text1, text2, diff_words1, diff_words2):
     """Create HTML with word-level highlighting"""
@@ -274,7 +321,7 @@ if doc1_file and doc2_file:
         
         if text1 and text2:
             with st.spinner("Finding word-level differences..."):
-                diff_words1, diff_words2 = find_word_level_differences(text1, text2)
+                diff_words1, diff_words2, sync_info = find_word_level_differences(text1, text2)
                 html1, html2 = create_html_diff(text1, text2, diff_words1, diff_words2)
             
             with st.spinner("Generating highlighted documents..."):
@@ -310,7 +357,8 @@ if doc1_file and doc2_file:
                 'pdf1_bytes': pdf1_bytes,
                 'pdf2_bytes': pdf2_bytes,
                 'is_pdf1': is_pdf1,
-                'is_pdf2': is_pdf2
+                'is_pdf2': is_pdf2,
+                'sync_info': sync_info
             }
             st.session_state.comparison_done = True
     
@@ -319,6 +367,14 @@ if doc1_file and doc2_file:
         results = st.session_state.results
         
         st.success("✅ Comparison complete!")
+        
+        # Display sync information
+        sync_info = results.get('sync_info', {})
+        if sync_info.get('sync_found'):
+            st.info(f"🔄 **Synchronization Point Found**: Starting comparison from word '{sync_info['sync_word1']}' "
+                   f"(skipped {sync_info['words_before_sync1']} words in Doc 1, {sync_info['words_before_sync2']} words in Doc 2)")
+        else:
+            st.warning("⚠️ No synchronization point found - documents appear completely different")
         
         # Display statistics
         col_stat1, col_stat2, col_stat3 = st.columns(3)
