@@ -364,16 +364,32 @@ if doc1_file and doc2_file:
             st.markdown(f'<div class="diff-container">{results["html2"]}</div>', unsafe_allow_html=True)
         
         # Sample differences
-        with st.expander("📋 Sample Differences"):
+        with st.expander("📋 Sample Differences (First 50)"):
             col_s1, col_s2 = st.columns(2)
             with col_s1:
-                st.markdown("**Unique to Doc 1 (sample):**")
-                sample1 = list(results['diff_words1'])[:20]
-                st.write(", ".join(sample1))
+                st.markdown(f"**Unique to Doc 1: {len(results['diff_words1'])} words**")
+                sample1 = list(results['diff_words1'])[:50]
+                for word in sample1:
+                    st.text(f"'{word}'")
             with col_s2:
-                st.markdown("**Unique to Doc 2 (sample):**")
-                sample2 = list(results['diff_words2'])[:20]
-                st.write(", ".join(sample2))
+                st.markdown(f"**Unique to Doc 2: {len(results['diff_words2'])} words**")
+                sample2 = list(results['diff_words2'])[:50]
+                for word in sample2:
+                    st.text(f"'{word}'")
+        
+        # Debug: Show first few lines of each document
+        with st.expander("🔍 Debug: First 10 lines of each document"):
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                st.markdown("**Document 1 (first 10 lines):**")
+                lines1 = results['text1'].split('\n')[:10]
+                for i, line in enumerate(lines1):
+                    st.text(f"{i+1}: {line[:100]}")
+            with col_d2:
+                st.markdown("**Document 2 (first 10 lines):**")
+                lines2 = results['text2'].split('\n')[:10]
+                for i, line in enumerate(lines2):
+                    st.text(f"{i+1}: {line[:100]}")
 
 else:
     st.info("👆 Please upload both documents to begin comparison")
