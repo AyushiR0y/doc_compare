@@ -10,6 +10,28 @@ st.set_page_config(page_title="Document Diff Checker", layout="wide")
 st.title("📄 Document Diff Checker")
 st.markdown("Upload two documents (PDF or Word) to compare and highlight their differences")
 
+# Advanced settings
+with st.expander("⚙️ Advanced Settings"):
+    st.markdown("**Matching Sensitivity** - Adjust how strictly words must match")
+    context_threshold = st.slider(
+        "Context similarity threshold (lower = more lenient for layout differences)",
+        min_value=0.3,
+        max_value=0.9,
+        value=0.6,
+        step=0.1,
+        help="When comparing documents with different layouts (1-col vs 2-col), lower values will be more forgiving"
+    )
+    context_window = st.slider(
+        "Context window size (words before/after to consider)",
+        min_value=3,
+        max_value=20,
+        value=8,
+        step=1,
+        help="Larger windows provide more context but may be slower"
+    )
+    st.session_state.context_threshold = context_threshold
+    st.session_state.context_window = context_window
+
 # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
@@ -158,58 +180,110 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error reading PDF: {str(e)}")
         return None, None, None
 
-def find_word_level_differences(text1, text2):
-    """Find word-level differences using difflib's sequence matching at word level"""
+def find_word_level_differences(text1, text2, context_threshold=0.6, context_window=8):
+    """Find word-level differences using hybrid matching that handles layout differences"""
+    import streamlit as st
+    
     # Convert to word lists
     words1 = re.findall(r'\S+', text1)
     words2 = re.findall(r'\S+', text2)
     
-    # Track indices of different words, not the words themselves
     diff_indices1 = set()
     diff_indices2 = set()
+    matched_indices1 = set()
+    matched_indices2 = set()
     
-    # Use SequenceMatcher at word level for better alignment
+    # PASS 1: Quick exact sequence matching for well-aligned sections
     matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
-    
-    sync_blocks = []
-    total_matching_words = 0
-    
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
-            # Words are identical, don't highlight
-            total_matching_words += (i2 - i1)
-            if not sync_blocks:  # Record first sync block
-                sync_blocks.append({
-                    'start1': i1,
-                    'start2': j1,
-                    'word': words1[i1] if i1 < len(words1) else None
-                })
-        elif tag == 'replace':
-            # Words differ - mark these positions as different
-            diff_indices1.update(range(i1, i2))
-            diff_indices2.update(range(j1, j2))
-        elif tag == 'delete':
-            # Words only in text1
-            diff_indices1.update(range(i1, i2))
-        elif tag == 'insert':
-            # Words only in text2
-            diff_indices2.update(range(j1, j2))
+            # These sections match exactly - mark as matched
+            matched_indices1.update(range(i1, i2))
+            matched_indices2.update(range(j1, j2))
+    
+    # PASS 2: Context-based matching for unmatched words (handles reordering)
+    unmatched_words1 = [i for i in range(len(words1)) if i not in matched_indices1]
+    unmatched_words2 = [i for i in range(len(words2)) if i not in matched_indices2]
+    
+    # Create a reverse index for faster lookup
+    word2_positions = {}
+    for i2 in unmatched_words2:
+        word = words2[i2].lower()
+        if word not in word2_positions:
+            word2_positions[word] = []
+        word2_positions[word].append(i2)
+    
+    # Match unmatched words with context
+    for i1 in unmatched_words1:
+        word1 = words1[i1]
+        
+        # Find candidate positions in doc2
+        candidates = word2_positions.get(word1.lower(), [])
+        
+        if not candidates:
+            # Word doesn't exist in doc2 at all
+            diff_indices1.add(i1)
+            continue
+        
+        # Get context around this word in doc1
+        start_ctx = max(0, i1 - context_window)
+        end_ctx = min(len(words1), i1 + context_window + 1)
+        context1 = [w.lower() for w in words1[start_ctx:end_ctx]]
+        
+        # Find best matching candidate based on context
+        best_match = None
+        best_score = context_threshold  # Use configurable threshold
+        
+        for i2 in candidates:
+            if i2 in matched_indices2:
+                continue
+            
+            # Get context around candidate in doc2
+            start_ctx2 = max(0, i2 - context_window)
+            end_ctx2 = min(len(words2), i2 + context_window + 1)
+            context2 = [w.lower() for w in words2[start_ctx2:end_ctx2]]
+            
+            # Calculate context similarity
+            ctx_matcher = difflib.SequenceMatcher(None, context1, context2)
+            score = ctx_matcher.ratio()
+            
+            if score > best_score:
+                best_score = score
+                best_match = i2
+        
+        if best_match is not None:
+            # Found a good context match
+            matched_indices1.add(i1)
+            matched_indices2.add(best_match)
+        else:
+            # No good match found
+            diff_indices1.add(i1)
+    
+    # Any remaining unmatched words in doc2 are differences
+    for i2 in unmatched_words2:
+        if i2 not in matched_indices2:
+            diff_indices2.add(i2)
+    
+    # Calculate statistics
+    total_matching_words = len(matched_indices1)
     
     # Create sync info
-    first_sync = sync_blocks[0] if sync_blocks else None
+    first_match = min(matched_indices1) if matched_indices1 else None
+    
     sync_info = {
-        'sync_found': first_sync is not None,
-        'sync_word1': first_sync['word'] if first_sync else None,
-        'sync_idx1': first_sync['start1'] if first_sync else None,
-        'sync_idx2': first_sync['start2'] if first_sync else None,
-        'words_before_sync1': first_sync['start1'] if first_sync else 0,
-        'words_before_sync2': first_sync['start2'] if first_sync else 0,
+        'sync_found': first_match is not None,
+        'sync_word1': words1[first_match] if first_match is not None else None,
+        'sync_idx1': first_match,
+        'sync_idx2': None,
+        'words_before_sync1': first_match if first_match is not None else 0,
+        'words_before_sync2': 0,
         'total_matching': total_matching_words,
         'total_words1': len(words1),
-        'total_words2': len(words2)
+        'total_words2': len(words2),
+        'match_rate1': (len(matched_indices1) / len(words1) * 100) if words1 else 0,
+        'match_rate2': (len(matched_indices2) / len(words2) * 100) if words2 else 0
     }
     
-    # Return indices instead of word sets, along with the word lists
     return diff_indices1, diff_indices2, words1, words2, sync_info
 
 def create_html_diff(text1, text2, diff_indices1, diff_indices2, words1, words2):
@@ -372,7 +446,12 @@ if doc1_file and doc2_file:
         
         if text1 and text2:
             with st.spinner("Finding word-level differences..."):
-                diff_indices1, diff_indices2, words1, words2, sync_info = find_word_level_differences(text1, text2)
+                # Get user settings or use defaults
+                threshold = st.session_state.get('context_threshold', 0.6)
+                window = st.session_state.get('context_window', 8)
+                diff_indices1, diff_indices2, words1, words2, sync_info = find_word_level_differences(
+                    text1, text2, context_threshold=threshold, context_window=window
+                )
                 html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2, words1, words2)
             
             with st.spinner("Generating highlighted documents..."):
@@ -424,11 +503,15 @@ if doc1_file and doc2_file:
         # Display sync information
         sync_info = results.get('sync_info', {})
         if sync_info.get('sync_found'):
-            match_percentage = (sync_info.get('total_matching', 0) / max(sync_info.get('total_words1', 1), sync_info.get('total_words2', 1))) * 100
-            if sync_info['words_before_sync1'] > 0 or sync_info['words_before_sync2'] > 0:
-                st.info(f"🔄 **First matching content at**: '{sync_info['sync_word1']}' "
-                       f"(position {sync_info['sync_idx1']} in Doc 1, position {sync_info['sync_idx2']} in Doc 2)")
-            st.info(f"📊 **Alignment**: {sync_info.get('total_matching', 0)} words match ({match_percentage:.1f}% alignment)")
+            match_rate1 = sync_info.get('match_rate1', 0)
+            match_rate2 = sync_info.get('match_rate2', 0)
+            st.info(f"📊 **Content Match**: {match_rate1:.1f}% of Doc 1 words found in Doc 2 | "
+                   f"{match_rate2:.1f}% of Doc 2 words found in Doc 1")
+            if match_rate1 < 80 or match_rate2 < 80:
+                st.warning("⚠️ Low match rate detected. This could indicate:\n"
+                          "- Documents have significantly different content\n"
+                          "- Different formatting/layout is causing alignment issues\n"
+                          "- One document has much more content than the other")
         else:
             st.warning("⚠️ No matching content found - documents appear completely different")
         
