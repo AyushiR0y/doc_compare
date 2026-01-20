@@ -3,6 +3,7 @@ import difflib
 from io import BytesIO
 import fitz  # PyMuPDF
 from docx import Document
+import re
 
 st.set_page_config(page_title="Document Diff Checker", layout="wide")
 
@@ -28,7 +29,7 @@ def extract_text_from_word(docx_file):
         
         all_words = []
         
-        # Extract from paragraphs - RUN BY RUN
+        # Extract from paragraphs - RUN BY RUN (not paragraph text)
         for para in doc.paragraphs:
             for run in para.runs:
                 run_text = run.text
@@ -101,8 +102,8 @@ def normalize_word(word):
 
 def find_word_differences_with_sync(text1, text2):
     """
-    Find word-level differences with aggressive syncing strategy.
-    Uses ratio threshold to find strong matches and sync aggressively.
+    Find word-level differences with improved syncing.
+    Uses a sliding window approach to better handle insertions/deletions.
     """
     # Split into words
     words1 = text1.split()
@@ -112,58 +113,80 @@ def find_word_differences_with_sync(text1, text2):
     normalized1 = [normalize_word(w) for w in words1]
     normalized2 = [normalize_word(w) for w in words2]
     
-    # Use SequenceMatcher with higher ratio threshold for better syncing
-    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
+    # Use SequenceMatcher with better parameters for syncing
+    matcher = difflib.SequenceMatcher(
+        None, 
+        normalized1, 
+        normalized2, 
+        autojunk=False  # Don't ignore repeated elements
+    )
     
-    # Get all matching blocks
+    # Get matching blocks first to understand the structure
     matching_blocks = matcher.get_matching_blocks()
     
-    # Filter for strong matches only (at least 5 consecutive words)
-    MIN_SYNC_LENGTH = 5
-    strong_matches = [m for m in matching_blocks if m.size >= MIN_SYNC_LENGTH or m == matching_blocks[-1]]
+    # Filter out very small matches (less than 3 words) that might be noise
+    # Keep only substantial matching blocks
+    significant_matches = []
+    for match in matching_blocks:
+        # match is (i, j, size) where size is the length of the match
+        if match.size >= 3 or match == matching_blocks[-1]:  # Keep the final sentinel
+            significant_matches.append(match)
     
-    # If we don't have enough strong matches, lower the threshold
-    if len(strong_matches) < 3:
-        MIN_SYNC_LENGTH = 3
-        strong_matches = [m for m in matching_blocks if m.size >= MIN_SYNC_LENGTH or m == matching_blocks[-1]]
+    # If we filtered out too many matches, use original
+    if len(significant_matches) < len(matching_blocks) * 0.3:
+        significant_matches = matching_blocks
     
-    # Build a new sequence of opcodes based on strong matches
+    # Rebuild matcher with significant matches to get better opcodes
+    matcher.matching_blocks = significant_matches
+    
+    # Sets to store indices of different words
     diff_indices1 = set()
     diff_indices2 = set()
     
-    last_i = 0
-    last_j = 0
-    
-    for match in strong_matches:
-        i, j, size = match
-        
-        # Everything between last match and this match is different
-        if i > last_i or j > last_j:
-            # Check if this is a small gap that might be noise
-            gap_size1 = i - last_i
-            gap_size2 = j - last_j
+    # Process each operation
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # Words match - don't highlight
+            continue
+        elif tag == 'replace':
+            # Only mark as different if the replacement is substantial
+            # If it's a small replacement within a larger match, might be formatting
+            replacement_size1 = i2 - i1
+            replacement_size2 = j2 - j1
             
-            # If gap is significant, mark as different
-            if gap_size1 > 0:
-                diff_indices1.update(range(last_i, i))
-            if gap_size2 > 0:
-                diff_indices2.update(range(last_j, j))
-        
-        # Move pointers to end of this match
-        last_i = i + size
-        last_j = j + size
+            # If replacing just 1-2 words and they're very similar, skip
+            if replacement_size1 <= 2 and replacement_size2 <= 2:
+                # Check if words are similar (might just be formatting difference)
+                similar = True
+                for idx in range(min(replacement_size1, replacement_size2)):
+                    if normalized1[i1 + idx] != normalized2[j1 + idx]:
+                        similar = False
+                        break
+                
+                if similar:
+                    continue
+            
+            diff_indices1.update(range(i1, i2))
+            diff_indices2.update(range(j1, j2))
+        elif tag == 'delete':
+            # Words only in doc1
+            diff_indices1.update(range(i1, i2))
+        elif tag == 'insert':
+            # Words only in doc2
+            diff_indices2.update(range(j1, j2))
     
     # Calculate statistics
-    total_matching_words = sum(m.size for m in strong_matches if m.size > 0)
+    total_equal_blocks = sum(1 for tag, _, _, _, _ in matcher.get_opcodes() if tag == 'equal')
+    total_matching_words = sum(i2 - i1 for tag, i1, i2, _, _ in matcher.get_opcodes() if tag == 'equal')
     
     sync_info = {
         'total_matching': total_matching_words,
         'total_words1': len(words1),
         'total_words2': len(words2),
-        'equal_blocks': len(strong_matches) - 1,  # Exclude sentinel
+        'equal_blocks': total_equal_blocks,
         'diff_words1': len(diff_indices1),
         'diff_words2': len(diff_indices2),
-        'min_sync_length': MIN_SYNC_LENGTH
+        'significant_matches': len(significant_matches)
     }
     
     return diff_indices1, diff_indices2, words1, words2, sync_info
@@ -214,50 +237,97 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     return highlighted_doc
 
 def highlight_word_doc(docx_file, extracted_text, diff_indices):
-    """Highlight words in Word document"""
+    """
+    Highlight words in Word document using word-level precision.
+    Processes document in same order as extraction with detailed debugging.
+    """
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
-    # Track current word index
+    # Get the words from extraction for comparison
+    extracted_words = extracted_text.split()
+    
+    st.write("### 🔍 DEBUG: Word Highlighting Analysis")
+    st.write(f"Total words in extracted text: {len(extracted_words)}")
+    st.write(f"Total diff indices to highlight: {len(diff_indices)}")
+    
+    if diff_indices:
+        sample_diff = sorted(list(diff_indices))[:10]
+        st.write(f"First 10 diff indices: {sample_diff}")
+        st.write(f"Words at those positions: {[extracted_words[i] if i < len(extracted_words) else 'OUT_OF_BOUNDS' for i in sample_diff]}")
+    
+    # Track current word index as we traverse the document
     word_idx = 0
     
+    st.write("\n### Document Traversal:")
+    
     # Process paragraphs
-    for para in doc.paragraphs:
-        for run in para.runs:
+    for para_num, para in enumerate(doc.paragraphs):
+        para_text = para.text
+        if not para_text.strip():
+            continue
+        
+        para_words = para_text.split()
+        para_start_idx = word_idx
+        
+        # For each run in the paragraph
+        for run_num, run in enumerate(para.runs):
             run_text = run.text
             if not run_text.strip():
                 continue
             
             run_words = run_text.split()
+            run_start_idx = word_idx
+            run_end_idx = word_idx + len(run_words)
             
             # Check if any word in this run needs highlighting
             should_highlight = any((word_idx + i) in diff_indices for i in range(len(run_words)))
             
             if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                st.write(f"✅ HIGHLIGHT Para {para_num}, Run {run_num}: indices {run_start_idx}-{run_end_idx}, text: '{run_text[:60]}'")
+                st.write(f"   Extracted words at this position: {extracted_words[run_start_idx:run_end_idx]}")
+                st.write(f"   Run words: {run_words}")
             
             word_idx += len(run_words)
+        
+        # Show paragraph summary
+        st.write(f"Para {para_num}: words {para_start_idx}-{word_idx} ({len(para_words)} words)")
     
     # Process tables
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    for run in para.runs:
+    for table_num, table in enumerate(doc.tables):
+        for row_num, row in enumerate(table.rows):
+            for cell_num, cell in enumerate(row.cells):
+                for para_num, para in enumerate(cell.paragraphs):
+                    para_text = para.text
+                    if not para_text.strip():
+                        continue
+                    
+                    for run_num, run in enumerate(para.runs):
                         run_text = run.text
                         if not run_text.strip():
                             continue
                         
                         run_words = run_text.split()
+                        run_start_idx = word_idx
+                        run_end_idx = word_idx + len(run_words)
                         
                         should_highlight = any((word_idx + i) in diff_indices for i in range(len(run_words)))
                         
                         if should_highlight:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                            st.write(f"✅ HIGHLIGHT Table {table_num}, Row {row_num}, Cell {cell_num}: indices {run_start_idx}-{run_end_idx}")
                         
                         word_idx += len(run_words)
+    
+    st.write(f"\n### Final Count: Processed {word_idx} words from document")
+    st.write(f"Expected: {len(extracted_words)} words")
+    
+    if word_idx != len(extracted_words):
+        st.error(f"⚠️ MISMATCH! Document has {word_idx} words but extraction found {len(extracted_words)} words")
+        st.write("This mismatch is causing incorrect highlighting!")
     
     output = BytesIO()
     doc.save(output)
@@ -377,9 +447,7 @@ if doc1_file and doc2_file:
         sync_info = results['sync_info']
         match_percentage = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
         
-        st.info(f"📊 **Sync Strategy**: Using minimum {sync_info['min_sync_length']}-word matches for alignment | "
-                f"{sync_info['total_matching']} matching words ({match_percentage:.1f}% match) | "
-                f"{sync_info['equal_blocks']} sync points found")
+        st.info(f"📊 **Alignment**: {sync_info['total_matching']} matching words out of {max(sync_info['total_words1'], sync_info['total_words2'])} ({match_percentage:.1f}% match)")
         
         col_stat1, col_stat2, col_stat3 = st.columns(3)
         with col_stat1:
@@ -389,7 +457,8 @@ if doc1_file and doc2_file:
             st.metric("Words in Doc 2", sync_info['total_words2'])
             st.metric("Different in Doc 2", sync_info['diff_words2'])
         with col_stat3:
-            st.metric("Match Rate", f"{match_percentage:.1f}%")
+            similarity = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
+            st.metric("Match Rate", f"{similarity:.1f}%")
             st.metric("Sync Blocks", sync_info['equal_blocks'])
         
         # Download buttons
@@ -429,24 +498,32 @@ if doc1_file and doc2_file:
             st.markdown(f'<div class="diff-container">{results["html2"]}</div>', unsafe_allow_html=True)
         
         # Sample differences
-        with st.expander("📋 View Sample Differences"):
+        with st.expander("📋 Sample Differences (First 50)"):
             col_s1, col_s2 = st.columns(2)
             with col_s1:
                 st.markdown(f"**Different words in Doc 1: {len(results['diff_indices1'])} total**")
-                sample_indices1 = sorted(list(results['diff_indices1']))[:30]
+                sample_indices1 = sorted(list(results['diff_indices1']))[:50]
                 for idx in sample_indices1:
                     if idx < len(results['words1']):
-                        st.text(f"Position {idx}: '{results['words1'][idx]}'")
+                        word1 = results['words1'][idx]
+                        word2 = results['words2'][idx] if idx < len(results['words2']) else "N/A"
+                        norm1 = normalize_word(word1)
+                        norm2 = normalize_word(word2) if idx < len(results['words2']) else "N/A"
+                        st.text(f"Pos {idx}: '{word1}' (norm: '{norm1}') vs '{word2}' (norm: '{norm2}')")
             with col_s2:
                 st.markdown(f"**Different words in Doc 2: {len(results['diff_indices2'])} total**")
-                sample_indices2 = sorted(list(results['diff_indices2']))[:30]
+                sample_indices2 = sorted(list(results['diff_indices2']))[:50]
                 for idx in sample_indices2:
                     if idx < len(results['words2']):
-                        st.text(f"Position {idx}: '{results['words2'][idx]}'")
+                        word2 = results['words2'][idx]
+                        word1 = results['words1'][idx] if idx < len(results['words1']) else "N/A"
+                        norm2 = normalize_word(word2)
+                        norm1 = normalize_word(word1) if idx < len(results['words1']) else "N/A"
+                        st.text(f"Pos {idx}: '{word2}' (norm: '{norm2}') vs '{word1}' (norm: '{norm1}')")
 
 else:
     st.info("👆 Please upload both documents to begin comparison")
 
 # Footer
 st.markdown("---")
-st.markdown("💡 **Aggressive syncing** - Requires at least 5 consecutive matching words to re-sync, reducing false positives from minor variations")
+st.markdown("💡 **Precise word-by-word comparison** - Highlights only the words that actually differ between documents")
