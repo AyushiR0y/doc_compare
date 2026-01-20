@@ -27,30 +27,32 @@ def extract_text_from_word(docx_file):
         docx_file.seek(0)
         doc = Document(docx_file)
         
-        all_text = []
+        all_words = []
         
-        # Extract from paragraphs
+        # Extract from paragraphs - word by word
         for para in doc.paragraphs:
-            text = para.text.strip()
-            if text:
-                all_text.append(text)
+            para_text = para.text
+            if para_text.strip():
+                words = para_text.split()
+                all_words.extend(words)
         
-        # Extract from tables
+        # Extract from tables - word by word
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        text = para.text.strip()
-                        if text:
-                            all_text.append(text)
+                        para_text = para.text
+                        if para_text.strip():
+                            words = para_text.split()
+                            all_words.extend(words)
         
-        extracted_text = '\n'.join(all_text)
+        # Join with spaces to create text
+        extracted_text = ' '.join(all_words)
         
-        word_count = len(extracted_text.split())
-        if len(all_text) == 0:
+        if len(all_words) == 0:
             st.warning("⚠️ No text extracted from Word document.")
-        elif word_count < 10:
-            st.warning(f"⚠️ Only {word_count} words extracted from Word document.")
+        elif len(all_words) < 10:
+            st.warning(f"⚠️ Only {len(all_words)} words extracted from Word document.")
         
         return extracted_text
     except Exception as e:
@@ -70,7 +72,7 @@ def extract_text_from_pdf(pdf_file):
             page = doc[page_num]
             
             # Get word-level data with coordinates
-            words_data = page.get_text("words")  # Returns list of (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+            words_data = page.get_text("words")
             
             for word_info in words_data:
                 x0, y0, x1, y1, word_text = word_info[:5]
@@ -83,7 +85,7 @@ def extract_text_from_pdf(pdf_file):
                     })
                     full_text_parts.append(word_text.strip())
         
-        # Join with spaces to create full text
+        # Join with spaces
         full_text = ' '.join(full_text_parts)
         
         return full_text, all_words, doc
@@ -93,7 +95,6 @@ def extract_text_from_pdf(pdf_file):
 
 def normalize_word(word):
     """Normalize word by removing punctuation and converting to lowercase for comparison"""
-    # Remove common punctuation from edges
     word = word.strip('.,;:!?"\'-()[]{}')
     return word.lower()
 
@@ -101,7 +102,6 @@ def find_word_differences_with_sync(text1, text2):
     """
     Find word-level differences with proper syncing.
     Ignores case and punctuation differences.
-    Returns sets of word indices that should be highlighted in each document.
     """
     # Split into words
     words1 = text1.split()
@@ -121,17 +121,13 @@ def find_word_differences_with_sync(text1, text2):
     # Process each operation
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
-            # Words match - don't highlight
             continue
         elif tag == 'replace':
-            # Words are different - highlight all in this range
             diff_indices1.update(range(i1, i2))
             diff_indices2.update(range(j1, j2))
         elif tag == 'delete':
-            # Words only in doc1 - highlight them
             diff_indices1.update(range(i1, i2))
         elif tag == 'insert':
-            # Words only in doc2 - highlight them
             diff_indices2.update(range(j1, j2))
     
     # Calculate statistics
@@ -194,86 +190,73 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     
     return highlighted_doc
 
-def highlight_word_doc(docx_file, text, diff_indices):
-    """Highlight specific words in Word document based on indices"""
-    from docx.shared import RGBColor
+def highlight_word_doc(docx_file, diff_indices):
+    """
+    Highlight words in Word document using word-level precision.
+    Processes document in same order as extraction.
+    """
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
-    # Get list of all words from extracted text
-    all_words = text.split()
+    # Track current word index as we traverse the document
+    word_idx = 0
     
-    # Debug: let's see what we're working with
-    st.write(f"DEBUG: Total words in extracted text: {len(all_words)}")
-    st.write(f"DEBUG: Total diff indices: {len(diff_indices)}")
-    if diff_indices:
-        st.write(f"DEBUG: First 10 diff indices: {sorted(list(diff_indices))[:10]}")
-        st.write(f"DEBUG: First 10 diff words: {[all_words[i] for i in sorted(list(diff_indices))[:10] if i < len(all_words)]}")
-    
-    # Track which word index we're at globally
-    current_word_idx = 0
-    
-    # Process all paragraphs
-    for para_num, paragraph in enumerate(doc.paragraphs):
-        for run_num, run in enumerate(paragraph.runs):
+    # Process paragraphs
+    for para in doc.paragraphs:
+        para_text = para.text
+        if not para_text.strip():
+            continue
+            
+        para_words = para_text.split()
+        
+        # For each run in the paragraph, check if it contains diff words
+        for run in para.runs:
             run_text = run.text
             if not run_text.strip():
                 continue
             
-            # Count words in this run
             run_words = run_text.split()
-            num_words = len(run_words)
             
-            if num_words == 0:
-                continue
-            
-            # Check if ANY word in this run's range needs highlighting
-            run_start_idx = current_word_idx
-            run_end_idx = current_word_idx + num_words
-            
-            # Get the actual words from extracted text for this range
-            extracted_words_in_range = all_words[run_start_idx:run_end_idx] if run_end_idx <= len(all_words) else []
-            
-            should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
+            # Check if any word in this run needs highlighting
+            should_highlight = False
+            for i in range(len(run_words)):
+                if (word_idx + i) in diff_indices:
+                    should_highlight = True
+                    break
             
             if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                st.write(f"DEBUG: Highlighting para {para_num}, run {run_num}, words {run_start_idx}-{run_end_idx}: '{run_text[:50]}'")
-                st.write(f"       Extracted words: {extracted_words_in_range}")
             
-            current_word_idx += num_words
+            word_idx += len(run_words)
     
-    # Also process tables
-    for table_num, table in enumerate(doc.tables):
-        for row_num, row in enumerate(table.rows):
-            for cell_num, cell in enumerate(row.cells):
-                for para_num, paragraph in enumerate(cell.paragraphs):
-                    for run_num, run in enumerate(paragraph.runs):
+    # Process tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para_text = para.text
+                    if not para_text.strip():
+                        continue
+                    
+                    for run in para.runs:
                         run_text = run.text
                         if not run_text.strip():
                             continue
                         
                         run_words = run_text.split()
-                        num_words = len(run_words)
                         
-                        if num_words == 0:
-                            continue
-                        
-                        run_start_idx = current_word_idx
-                        run_end_idx = current_word_idx + num_words
-                        
-                        should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
+                        should_highlight = False
+                        for i in range(len(run_words)):
+                            if (word_idx + i) in diff_indices:
+                                should_highlight = True
+                                break
                         
                         if should_highlight:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                            st.write(f"DEBUG: Highlighting table {table_num}, row {row_num}, cell {cell_num}, para {para_num}, run {run_num}")
                         
-                        current_word_idx += num_words
-    
-    st.write(f"DEBUG: Final word count after processing: {current_word_idx}")
-    st.write(f"DEBUG: Expected word count: {len(all_words)}")
+                        word_idx += len(run_words)
     
     output = BytesIO()
     doc.save(output)
@@ -353,7 +336,7 @@ if doc1_file and doc2_file:
                     highlighted_doc1.close()
                     pdf_doc1.close()
                 else:
-                    pdf1_bytes = highlight_word_doc(doc1_file, text1, diff_indices1)
+                    pdf1_bytes = highlight_word_doc(doc1_file, diff_indices1)
                 
                 if is_pdf2:
                     highlighted_doc2 = highlight_pdf_words(pdf_doc2, word_data2, diff_indices2)
@@ -363,7 +346,7 @@ if doc1_file and doc2_file:
                     highlighted_doc2.close()
                     pdf_doc2.close()
                 else:
-                    pdf2_bytes = highlight_word_doc(doc2_file, text2, diff_indices2)
+                    pdf2_bytes = highlight_word_doc(doc2_file, diff_indices2)
             
             # Store results
             st.session_state.results = {
