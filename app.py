@@ -101,10 +101,10 @@ def normalize_word(word):
     word = re.sub(r'[.,;:!?\"\'\-\(\)\[\]\{\}/\\`~@#$%^&*+=<>|]', '', word)
     return word.lower().strip()
 
-def find_word_differences_with_sync(text1, text2):
+def find_word_differences_optimized(text1, text2):
     """
-    Find word-level differences with improved syncing.
-    Uses a sliding window approach to better handle insertions/deletions.
+    Find word-level differences using a more accurate approach.
+    Maps each word to its actual match in the other document.
     """
     # Split into words
     words1 = text1.split()
@@ -114,81 +114,67 @@ def find_word_differences_with_sync(text1, text2):
     normalized1 = [normalize_word(w) for w in words1]
     normalized2 = [normalize_word(w) for w in words2]
     
-    # Use SequenceMatcher with better parameters for syncing
-    matcher = difflib.SequenceMatcher(
-        None, 
-        normalized1, 
-        normalized2, 
-        autojunk=False  # Don't ignore repeated elements
-    )
+    # Use SequenceMatcher to get proper alignment
+    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
     
-    # Get matching blocks first to understand the structure
-    matching_blocks = matcher.get_matching_blocks()
+    # Create mapping of word indices between documents
+    # word_map1[i] = j means word i in doc1 corresponds to word j in doc2
+    # -1 means no match (deleted/inserted)
+    word_map1 = [-1] * len(words1)
+    word_map2 = [-1] * len(words2)
     
-    # Filter out very small matches (less than 3 words) that might be noise
-    # Keep only substantial matching blocks
-    significant_matches = []
-    for match in matching_blocks:
-        # match is (i, j, size) where size is the length of the match
-        if match.size >= 3 or match == matching_blocks[-1]:  # Keep the final sentinel
-            significant_matches.append(match)
+    # Build the mapping based on matching blocks
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == 'equal':
+            # These words match - map them
+            for offset in range(i2 - i1):
+                word_map1[i1 + offset] = j1 + offset
+                word_map2[j1 + offset] = i1 + offset
+        elif tag == 'replace':
+            # For replacements, map what we can
+            min_len = min(i2 - i1, j2 - j1)
+            for offset in range(min_len):
+                # Only map if normalized words are actually the same
+                if normalized1[i1 + offset] == normalized2[j1 + offset]:
+                    word_map1[i1 + offset] = j1 + offset
+                    word_map2[j1 + offset] = i1 + offset
     
-    # If we filtered out too many matches, use original
-    if len(significant_matches) < len(matching_blocks) * 0.3:
-        significant_matches = matching_blocks
-    
-    # Rebuild matcher with significant matches to get better opcodes
-    matcher.matching_blocks = significant_matches
-    
-    # Sets to store indices of different words
+    # Now determine which words are actually different
     diff_indices1 = set()
     diff_indices2 = set()
     
-    # Process each operation
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == 'equal':
-            # Words match - don't highlight
-            continue
-        elif tag == 'replace':
-            # Check each word pair in the replacement to see if they're actually different
-            # (ignoring punctuation differences)
-            min_len = min(i2 - i1, j2 - j1)
-            max_len = max(i2 - i1, j2 - j1)
-            
-            # If the normalized words are the same, don't highlight
-            for idx in range(min_len):
-                if normalized1[i1 + idx] != normalized2[j1 + idx]:
-                    diff_indices1.add(i1 + idx)
-                    diff_indices2.add(j1 + idx)
-            
-            # Add any remaining words from the longer sequence
-            if i2 - i1 > min_len:
-                diff_indices1.update(range(i1 + min_len, i2))
-            if j2 - j1 > min_len:
-                diff_indices2.update(range(j1 + min_len, j2))
-                
-        elif tag == 'delete':
-            # Words only in doc1
-            diff_indices1.update(range(i1, i2))
-        elif tag == 'insert':
-            # Words only in doc2
-            diff_indices2.update(range(j1, j2))
+    for i, word in enumerate(words1):
+        j = word_map1[i]
+        if j == -1:
+            # This word doesn't exist in doc2 (deletion)
+            diff_indices1.add(i)
+        else:
+            # Compare the actual words (not just normalized)
+            # Only highlight if they're truly different
+            if normalize_word(words1[i]) != normalize_word(words2[j]):
+                diff_indices1.add(i)
+                diff_indices2.add(j)
+    
+    for j, word in enumerate(words2):
+        i = word_map2[j]
+        if i == -1:
+            # This word doesn't exist in doc1 (insertion)
+            diff_indices2.add(j)
     
     # Calculate statistics
-    total_equal_blocks = sum(1 for tag, _, _, _, _ in matcher.get_opcodes() if tag == 'equal')
-    total_matching_words = sum(i2 - i1 for tag, i1, i2, _, _ in matcher.get_opcodes() if tag == 'equal')
+    total_matching_words = sum(1 for i in word_map1 if i != -1 and 
+                               normalize_word(words1[word_map1.index(i)] if i in word_map2 else "") == 
+                               normalize_word(words2[i] if i < len(words2) else ""))
     
     sync_info = {
         'total_matching': total_matching_words,
         'total_words1': len(words1),
         'total_words2': len(words2),
-        'equal_blocks': total_equal_blocks,
         'diff_words1': len(diff_indices1),
         'diff_words2': len(diff_indices2),
-        'significant_matches': len(significant_matches)
     }
     
-    return diff_indices1, diff_indices2, words1, words2, sync_info
+    return diff_indices1, diff_indices2, words1, words2, sync_info, word_map1, word_map2
 
 def create_html_diff(text1, text2, diff_indices1, diff_indices2):
     """Create HTML with highlighted differences"""
@@ -266,13 +252,13 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
             run_words = run_text.split()
             
             # Check if ANY word in this run needs highlighting
-            # Only highlight if at least one word is truly different
-            words_to_check = []
+            should_highlight = False
             for i in range(len(run_words)):
                 if (word_idx + i) in diff_indices:
-                    words_to_check.append(word_idx + i)
+                    should_highlight = True
+                    break
             
-            if words_to_check:
+            if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             
             word_idx += len(run_words)
@@ -294,12 +280,13 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
                         run_words = run_text.split()
                         
                         # Check if ANY word in this run needs highlighting
-                        words_to_check = []
+                        should_highlight = False
                         for i in range(len(run_words)):
                             if (word_idx + i) in diff_indices:
-                                words_to_check.append(word_idx + i)
+                                should_highlight = True
+                                break
                         
-                        if words_to_check:
+                        if should_highlight:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                         
                         word_idx += len(run_words)
@@ -369,7 +356,7 @@ if doc1_file and doc2_file:
         
         if text1 and text2:
             with st.spinner("Finding differences..."):
-                diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_with_sync(text1, text2)
+                diff_indices1, diff_indices2, words1, words2, sync_info, word_map1, word_map2 = find_word_differences_optimized(text1, text2)
                 html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2)
             
             with st.spinner("Generating highlighted documents..."):
@@ -408,7 +395,9 @@ if doc1_file and doc2_file:
                 'pdf2_bytes': pdf2_bytes,
                 'is_pdf1': is_pdf1,
                 'is_pdf2': is_pdf2,
-                'sync_info': sync_info
+                'sync_info': sync_info,
+                'word_map1': word_map1,
+                'word_map2': word_map2
             }
             st.session_state.comparison_done = True
     
@@ -434,7 +423,6 @@ if doc1_file and doc2_file:
         with col_stat3:
             similarity = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
             st.metric("Match Rate", f"{similarity:.1f}%")
-            st.metric("Sync Blocks", sync_info['equal_blocks'])
         
         # Download buttons
         st.markdown("### Download Highlighted Documents")
@@ -481,20 +469,30 @@ if doc1_file and doc2_file:
                 for idx in sample_indices1:
                     if idx < len(results['words1']):
                         word1 = results['words1'][idx]
-                        word2 = results['words2'][idx] if idx < len(results['words2']) else "N/A"
+                        mapped_idx = results['word_map1'][idx]
+                        if mapped_idx >= 0 and mapped_idx < len(results['words2']):
+                            word2 = results['words2'][mapped_idx]
+                            norm2 = normalize_word(word2)
+                        else:
+                            word2 = "[DELETED]"
+                            norm2 = ""
                         norm1 = normalize_word(word1)
-                        norm2 = normalize_word(word2) if idx < len(results['words2']) else "N/A"
-                        st.text(f"Pos {idx}: '{word1}' (norm: '{norm1}') vs '{word2}' (norm: '{norm2}')")
+                        st.text(f"Pos {idx}: '{word1}' (norm: '{norm1}') ↔ '{word2}' (norm: '{norm2}')")
             with col_s2:
                 st.markdown(f"**Different words in Doc 2: {len(results['diff_indices2'])} total**")
                 sample_indices2 = sorted(list(results['diff_indices2']))[:50]
                 for idx in sample_indices2:
                     if idx < len(results['words2']):
                         word2 = results['words2'][idx]
-                        word1 = results['words1'][idx] if idx < len(results['words1']) else "N/A"
+                        mapped_idx = results['word_map2'][idx]
+                        if mapped_idx >= 0 and mapped_idx < len(results['words1']):
+                            word1 = results['words1'][mapped_idx]
+                            norm1 = normalize_word(word1)
+                        else:
+                            word1 = "[INSERTED]"
+                            norm1 = ""
                         norm2 = normalize_word(word2)
-                        norm1 = normalize_word(word1) if idx < len(results['words1']) else "N/A"
-                        st.text(f"Pos {idx}: '{word2}' (norm: '{norm2}') vs '{word1}' (norm: '{norm1}')")
+                        st.text(f"Pos {idx}: '{word2}' (norm: '{norm2}') ↔ '{word1}' (norm: '{norm1}')")
 
 else:
     st.info("👆 Please upload both documents to begin comparison")
