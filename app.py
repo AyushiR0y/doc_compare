@@ -93,17 +93,28 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error reading PDF: {str(e)}")
         return None, None, None
 
+def normalize_word(word):
+    """Normalize word by removing punctuation and converting to lowercase for comparison"""
+    # Remove common punctuation from edges
+    word = word.strip('.,;:!?"\'-()[]{}')
+    return word.lower()
+
 def find_word_differences_with_sync(text1, text2):
     """
     Find word-level differences with proper syncing.
+    Ignores case and punctuation differences.
     Returns sets of word indices that should be highlighted in each document.
     """
     # Split into words
     words1 = text1.split()
     words2 = text2.split()
     
-    # Use SequenceMatcher to find matching and non-matching blocks
-    matcher = difflib.SequenceMatcher(None, words1, words2, autojunk=False)
+    # Create normalized versions for comparison
+    normalized1 = [normalize_word(w) for w in words1]
+    normalized2 = [normalize_word(w) for w in words2]
+    
+    # Use SequenceMatcher on normalized words
+    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
     
     # Sets to store indices of different words
     diff_indices1 = set()
