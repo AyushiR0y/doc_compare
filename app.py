@@ -211,7 +211,8 @@ def highlight_pdf_words(doc, word_data, diff_indices):
                         # Use different color for table content
                         if word_info.get('in_table', False):
                             highlight = new_page.add_highlight_annot(rect)
-                            highlight.set_colors(stroke=fitz.utils.getColor("orange"))
+                            # Light orange/peach color (RGB: 255, 200, 150)
+                            highlight.set_colors(stroke=[1.0, 0.78, 0.59])
                         else:
                             highlight = new_page.add_highlight_annot(rect)
                             highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
@@ -223,96 +224,162 @@ def highlight_pdf_words(doc, word_data, diff_indices):
 
 def highlight_word_doc(docx_file, extracted_text, diff_indices):
     """
-    Highlight words in Word document with improved accuracy.
-    Uses paragraph-level text matching for better alignment.
+    Highlight words in Word document with precise run-level matching.
     """
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
-    # Split extracted text into segments (paragraphs)
-    text_segments = [seg.strip() for seg in extracted_text.split('\n\n') if seg.strip()]
-    
-    # Create a word index mapping
+    # Get all words from extracted text
     extracted_words = extracted_text.replace('\n\n', ' ').split()
     
-    # Track current word index
+    # Build a map of word positions to track what we've processed
     word_idx = 0
-    segment_idx = 0
     
-    # Process paragraphs
+    # Process regular paragraphs
     for para in doc.paragraphs:
         para_text = para.text.strip()
         if not para_text:
             continue
         
-        # Check if this paragraph matches current segment
-        if segment_idx < len(text_segments) and para_text == text_segments[segment_idx]:
-            para_words = para_text.split()
+        para_words = para_text.split()
+        
+        # Match this paragraph's words to extracted words
+        para_start_idx = word_idx
+        
+        # Check if current paragraph words match extracted words at current position
+        matches = True
+        for i, pword in enumerate(para_words):
+            if word_idx + i >= len(extracted_words):
+                matches = False
+                break
+            if normalize_word(pword) != normalize_word(extracted_words[word_idx + i]):
+                matches = False
+                break
+        
+        if not matches:
+            # Try to find where this paragraph appears in extracted words
+            # This handles cases where paragraphs might be out of sync
+            for search_offset in range(max(0, word_idx - 10), min(len(extracted_words), word_idx + 50)):
+                temp_matches = True
+                for i, pword in enumerate(para_words):
+                    if search_offset + i >= len(extracted_words):
+                        temp_matches = False
+                        break
+                    if normalize_word(pword) != normalize_word(extracted_words[search_offset + i]):
+                        temp_matches = False
+                        break
+                if temp_matches:
+                    word_idx = search_offset
+                    para_start_idx = search_offset
+                    break
+        
+        # Now highlight runs in this paragraph
+        run_word_position = para_start_idx
+        
+        for run in para.runs:
+            run_text = run.text
+            if not run_text:
+                continue
             
-            # Process each run in the paragraph
-            run_word_offset = 0
-            for run in para.runs:
-                run_text = run.text
-                if not run_text.strip():
-                    continue
-                
-                run_words = run_text.split()
-                run_start_idx = word_idx + run_word_offset
-                run_end_idx = run_start_idx + len(run_words)
-                
-                # Check if any word in this run needs highlighting
-                should_highlight = any((idx) in diff_indices for idx in range(run_start_idx, run_end_idx))
-                
-                if should_highlight:
-                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-                
-                run_word_offset += len(run_words)
+            run_words = run_text.split()
+            if not run_words:
+                continue
             
-            word_idx += len(para_words)
-            segment_idx += 1
+            # Check if ANY word in this run should be highlighted
+            should_highlight = False
+            for i in range(len(run_words)):
+                if (run_word_position + i) in diff_indices:
+                    should_highlight = True
+                    break
+            
+            if should_highlight:
+                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            
+            run_word_position += len(run_words)
+        
+        # Move global word index forward
+        word_idx += len(para_words)
     
-    # Process tables
+    # Process tables with improved logic
     for table in doc.tables:
         for row in table.rows:
+            row_cells = []
+            
+            # First pass: collect all cell texts for this row
             for cell in row.cells:
-                cell_full_text = ' '.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
-                
-                if not cell_full_text:
-                    continue
-                
-                # Check if this cell matches current segment
-                if segment_idx < len(text_segments):
-                    # The segment might contain multiple cells joined by ' | '
-                    segment_parts = text_segments[segment_idx].split(' | ')
+                cell_text = ' '.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
+                if cell_text:
+                    row_cells.append(cell_text)
+            
+            # Check if we can find this row in extracted text
+            if not row_cells:
+                continue
+            
+            # The row might be represented as "cell1 | cell2 | cell3" in extracted text
+            expected_row_text = ' | '.join(row_cells)
+            
+            # Try to find this in extracted text starting from current position
+            row_found = False
+            search_range = ' '.join(extracted_words[word_idx:min(word_idx + 200, len(extracted_words))])
+            
+            if expected_row_text in search_range:
+                row_found = True
+            
+            # Process each cell
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para_text = para.text.strip()
+                    if not para_text:
+                        continue
                     
-                    for cell_para in cell.paragraphs:
-                        para_text = cell_para.text.strip()
-                        if not para_text:
+                    para_words = para_text.split()
+                    cell_start_idx = word_idx
+                    
+                    # Verify alignment
+                    matches = True
+                    for i, cword in enumerate(para_words):
+                        if word_idx + i >= len(extracted_words):
+                            matches = False
+                            break
+                        if normalize_word(cword) != normalize_word(extracted_words[word_idx + i]):
+                            matches = False
+                            break
+                    
+                    # Highlight runs in this cell paragraph
+                    run_word_position = cell_start_idx if matches else word_idx
+                    
+                    for run in para.runs:
+                        run_text = run.text
+                        if not run_text:
                             continue
                         
-                        para_words = para_text.split()
+                        run_words = run_text.split()
+                        if not run_words:
+                            continue
                         
-                        for run in cell_para.runs:
-                            run_text = run.text
-                            if not run_text.strip():
-                                continue
-                            
-                            run_words = run_text.split()
-                            run_start_idx = word_idx
-                            run_end_idx = word_idx + len(run_words)
-                            
-                            should_highlight = any((idx) in diff_indices for idx in range(run_start_idx, run_end_idx))
-                            
-                            if should_highlight:
-                                run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
-                            
-                            word_idx += len(run_words)
+                        # Check if ANY word in this run should be highlighted
+                        should_highlight = False
+                        for i in range(len(run_words)):
+                            if (run_word_position + i) in diff_indices:
+                                should_highlight = True
+                                break
+                        
+                        if should_highlight:
+                            # Use bright green for table differences
+                            run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
+                        
+                        run_word_position += len(run_words)
+                    
+                    if matches:
+                        word_idx += len(para_words)
                 
-                # Move to next segment when we've processed the full row
-                if '|' in text_segments[segment_idx] if segment_idx < len(text_segments) else False:
-                    segment_idx += 1
+                # Account for cell separator in extracted text (the " | " part)
+                if word_idx < len(extracted_words) and cell != row.cells[-1]:
+                    # Skip the separator marker if present
+                    if word_idx + 1 < len(extracted_words) and extracted_words[word_idx] == '|':
+                        word_idx += 1
     
     output = BytesIO()
     doc.save(output)
@@ -470,7 +537,7 @@ if doc1_file and doc2_file:
         
         # Display text comparison
         st.markdown("### Text Comparison Preview")
-        st.markdown("🟡 **Yellow highlight** = Regular text differences | 🟠 **Orange highlight** (PDF) = Table differences | 🟢 **Green highlight** (Word) = Table differences")
+        st.markdown("🟡 **Yellow highlight** = Regular text differences | 🟠 **Light Orange highlight** (PDF) = Table differences | 🟢 **Green highlight** (Word) = Table differences")
         
         col_diff1, col_diff2 = st.columns(2)
         
@@ -508,5 +575,5 @@ else:
 # Footer
 st.markdown("---")
 st.markdown("💡 **Precise word-by-word comparison** - Highlights only the words that actually differ between documents")
-st.markdown("🔸 For PDFs: Yellow = regular text differences, Orange = table differences")
+st.markdown("🔸 For PDFs: Yellow = regular text differences, Light Orange = table differences")
 st.markdown("🔸 For Word docs: Yellow = regular text differences, Green = table differences")
