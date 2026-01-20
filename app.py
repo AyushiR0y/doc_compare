@@ -248,7 +248,7 @@ def highlight_word_doc(docx_file, text, diff_indices):
     # Also process tables
     for table_num, table in enumerate(doc.tables):
         for row_num, row in enumerate(table.rows):
-            for cell_num, cell in row.cells:
+            for cell_num, cell in enumerate(row.cells):
                 for para_num, paragraph in enumerate(cell.paragraphs):
                     for run_num, run in enumerate(paragraph.runs):
                         run_text = run.text
