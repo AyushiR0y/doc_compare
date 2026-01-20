@@ -22,29 +22,31 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def extract_text_from_word(docx_file):
-    """Extract text from Word document in the exact same order as we'll process for highlighting"""
+    """Extract text from Word document EXACTLY as we'll traverse it for highlighting - run by run"""
     try:
         docx_file.seek(0)
         doc = Document(docx_file)
         
         all_words = []
         
-        # Extract from paragraphs - word by word
+        # Extract from paragraphs - RUN BY RUN (not paragraph text)
         for para in doc.paragraphs:
-            para_text = para.text
-            if para_text.strip():
-                words = para_text.split()
-                all_words.extend(words)
+            for run in para.runs:
+                run_text = run.text
+                if run_text.strip():
+                    words = run_text.split()
+                    all_words.extend(words)
         
-        # Extract from tables - word by word
+        # Extract from tables - RUN BY RUN
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        para_text = para.text
-                        if para_text.strip():
-                            words = para_text.split()
-                            all_words.extend(words)
+                        for run in para.runs:
+                            run_text = run.text
+                            if run_text.strip():
+                                words = run_text.split()
+                                all_words.extend(words)
         
         # Join with spaces to create text
         extracted_text = ' '.join(all_words)
