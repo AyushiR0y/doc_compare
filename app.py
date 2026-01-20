@@ -22,7 +22,7 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def extract_text_from_word(docx_file):
-    """Extract text from Word document"""
+    """Extract text from Word document in the exact same order as we'll process for highlighting"""
     try:
         docx_file.seek(0)
         doc = Document(docx_file)
@@ -38,17 +38,15 @@ def extract_text_from_word(docx_file):
         # Extract from tables
         for table in doc.tables:
             for row in table.rows:
-                row_text = []
                 for cell in row.cells:
-                    cell_text = cell.text.strip()
-                    if cell_text:
-                        row_text.append(cell_text)
-                if row_text:
-                    all_text.append(' '.join(row_text))
+                    for para in cell.paragraphs:
+                        text = para.text.strip()
+                        if text:
+                            all_text.append(text)
         
         extracted_text = '\n'.join(all_text)
         
-        word_count = len(re.findall(r'\S+', extracted_text))
+        word_count = len(extracted_text.split())
         if len(all_text) == 0:
             st.warning("⚠️ No text extracted from Word document.")
         elif word_count < 10:
@@ -207,49 +205,75 @@ def highlight_word_doc(docx_file, text, diff_indices):
     # Get list of all words from extracted text
     all_words = text.split()
     
+    # Debug: let's see what we're working with
+    st.write(f"DEBUG: Total words in extracted text: {len(all_words)}")
+    st.write(f"DEBUG: Total diff indices: {len(diff_indices)}")
+    if diff_indices:
+        st.write(f"DEBUG: First 10 diff indices: {sorted(list(diff_indices))[:10]}")
+        st.write(f"DEBUG: First 10 diff words: {[all_words[i] for i in sorted(list(diff_indices))[:10] if i < len(all_words)]}")
+    
     # Track which word index we're at globally
     current_word_idx = 0
     
     # Process all paragraphs
-    for paragraph in doc.paragraphs:
-        for run in paragraph.runs:
-            if not run.text.strip():
+    for para_num, paragraph in enumerate(doc.paragraphs):
+        for run_num, run in enumerate(paragraph.runs):
+            run_text = run.text
+            if not run_text.strip():
                 continue
-                
-            run_words = run.text.split()
             
-            # Check each word position in this run
-            run_start_idx = current_word_idx
-            run_end_idx = current_word_idx + len(run_words)
+            # Count words in this run
+            run_words = run_text.split()
+            num_words = len(run_words)
+            
+            if num_words == 0:
+                continue
             
             # Check if ANY word in this run's range needs highlighting
+            run_start_idx = current_word_idx
+            run_end_idx = current_word_idx + num_words
+            
+            # Get the actual words from extracted text for this range
+            extracted_words_in_range = all_words[run_start_idx:run_end_idx] if run_end_idx <= len(all_words) else []
+            
             should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
             
             if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                st.write(f"DEBUG: Highlighting para {para_num}, run {run_num}, words {run_start_idx}-{run_end_idx}: '{run_text[:50]}'")
+                st.write(f"       Extracted words: {extracted_words_in_range}")
             
-            current_word_idx += len(run_words)
+            current_word_idx += num_words
     
     # Also process tables
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        if not run.text.strip():
+    for table_num, table in enumerate(doc.tables):
+        for row_num, row in enumerate(table.rows):
+            for cell_num, cell in row.cells:
+                for para_num, paragraph in enumerate(cell.paragraphs):
+                    for run_num, run in enumerate(paragraph.runs):
+                        run_text = run.text
+                        if not run_text.strip():
                             continue
-                            
-                        run_words = run.text.split()
+                        
+                        run_words = run_text.split()
+                        num_words = len(run_words)
+                        
+                        if num_words == 0:
+                            continue
                         
                         run_start_idx = current_word_idx
-                        run_end_idx = current_word_idx + len(run_words)
+                        run_end_idx = current_word_idx + num_words
                         
                         should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
                         
                         if should_highlight:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                            st.write(f"DEBUG: Highlighting table {table_num}, row {row_num}, cell {cell_num}, para {para_num}, run {run_num}")
                         
-                        current_word_idx += len(run_words)
+                        current_word_idx += num_words
+    
+    st.write(f"DEBUG: Final word count after processing: {current_word_idx}")
+    st.write(f"DEBUG: Expected word count: {len(all_words)}")
     
     output = BytesIO()
     doc.save(output)
