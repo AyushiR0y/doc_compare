@@ -204,31 +204,52 @@ def highlight_word_doc(docx_file, text, diff_indices):
     docx_file.seek(0)
     doc = Document(docx_file)
     
-    # Get list of words to highlight
+    # Get list of all words from extracted text
     all_words = text.split()
-    words_to_highlight = {all_words[i] for i in diff_indices if i < len(all_words)}
     
-    # Track which word index we're at
+    # Track which word index we're at globally
     current_word_idx = 0
     
+    # Process all paragraphs
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
+            if not run.text.strip():
+                continue
+                
             run_words = run.text.split()
             
-            # Check if any word in this run should be highlighted
-            should_highlight = False
-            for word in run_words:
-                if current_word_idx in diff_indices and current_word_idx < len(all_words):
-                    should_highlight = True
-                    break
-                current_word_idx += 1
+            # Check each word position in this run
+            run_start_idx = current_word_idx
+            run_end_idx = current_word_idx + len(run_words)
+            
+            # Check if ANY word in this run's range needs highlighting
+            should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
             
             if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
             
-            # Reset counter for this run
-            current_word_idx -= len(run_words)
             current_word_idx += len(run_words)
+    
+    # Also process tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        if not run.text.strip():
+                            continue
+                            
+                        run_words = run.text.split()
+                        
+                        run_start_idx = current_word_idx
+                        run_end_idx = current_word_idx + len(run_words)
+                        
+                        should_highlight = any(i in diff_indices for i in range(run_start_idx, run_end_idx))
+                        
+                        if should_highlight:
+                            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                        
+                        current_word_idx += len(run_words)
     
     output = BytesIO()
     doc.save(output)
