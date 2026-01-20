@@ -212,7 +212,7 @@ def highlight_pdf_words(doc, word_data, diff_indices):
                         if word_info.get('in_table', False):
                             highlight = new_page.add_highlight_annot(rect)
                             # Light orange/peach color (RGB: 255, 200, 150)
-                            highlight.set_colors(stroke=[1.0, 0.78, 0.59])
+                            highlight.set_colors(stroke=[1.0, 0.93, 0.88])
                         else:
                             highlight = new_page.add_highlight_annot(rect)
                             highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
