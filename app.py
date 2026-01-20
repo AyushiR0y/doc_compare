@@ -190,73 +190,98 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     
     return highlighted_doc
 
-def highlight_word_doc(docx_file, diff_indices):
+def highlight_word_doc(docx_file, extracted_text, diff_indices):
     """
     Highlight words in Word document using word-level precision.
-    Processes document in same order as extraction.
+    Processes document in same order as extraction with detailed debugging.
     """
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
+    # Get the words from extraction for comparison
+    extracted_words = extracted_text.split()
+    
+    st.write("### 🔍 DEBUG: Word Highlighting Analysis")
+    st.write(f"Total words in extracted text: {len(extracted_words)}")
+    st.write(f"Total diff indices to highlight: {len(diff_indices)}")
+    
+    if diff_indices:
+        sample_diff = sorted(list(diff_indices))[:10]
+        st.write(f"First 10 diff indices: {sample_diff}")
+        st.write(f"Words at those positions: {[extracted_words[i] if i < len(extracted_words) else 'OUT_OF_BOUNDS' for i in sample_diff]}")
+    
     # Track current word index as we traverse the document
     word_idx = 0
     
+    st.write("\n### Document Traversal:")
+    
     # Process paragraphs
-    for para in doc.paragraphs:
+    for para_num, para in enumerate(doc.paragraphs):
         para_text = para.text
         if not para_text.strip():
             continue
-            
-        para_words = para_text.split()
         
-        # For each run in the paragraph, check if it contains diff words
-        for run in para.runs:
+        para_words = para_text.split()
+        para_start_idx = word_idx
+        
+        # For each run in the paragraph
+        for run_num, run in enumerate(para.runs):
             run_text = run.text
             if not run_text.strip():
                 continue
             
             run_words = run_text.split()
+            run_start_idx = word_idx
+            run_end_idx = word_idx + len(run_words)
             
             # Check if any word in this run needs highlighting
-            should_highlight = False
-            for i in range(len(run_words)):
-                if (word_idx + i) in diff_indices:
-                    should_highlight = True
-                    break
+            should_highlight = any((word_idx + i) in diff_indices for i in range(len(run_words)))
             
             if should_highlight:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                st.write(f"✅ HIGHLIGHT Para {para_num}, Run {run_num}: indices {run_start_idx}-{run_end_idx}, text: '{run_text[:60]}'")
+                st.write(f"   Extracted words at this position: {extracted_words[run_start_idx:run_end_idx]}")
+                st.write(f"   Run words: {run_words}")
             
             word_idx += len(run_words)
+        
+        # Show paragraph summary
+        st.write(f"Para {para_num}: words {para_start_idx}-{word_idx} ({len(para_words)} words)")
     
     # Process tables
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
+    for table_num, table in enumerate(doc.tables):
+        for row_num, row in enumerate(table.rows):
+            for cell_num, cell in enumerate(row.cells):
+                for para_num, para in enumerate(cell.paragraphs):
                     para_text = para.text
                     if not para_text.strip():
                         continue
                     
-                    for run in para.runs:
+                    for run_num, run in enumerate(para.runs):
                         run_text = run.text
                         if not run_text.strip():
                             continue
                         
                         run_words = run_text.split()
+                        run_start_idx = word_idx
+                        run_end_idx = word_idx + len(run_words)
                         
-                        should_highlight = False
-                        for i in range(len(run_words)):
-                            if (word_idx + i) in diff_indices:
-                                should_highlight = True
-                                break
+                        should_highlight = any((word_idx + i) in diff_indices for i in range(len(run_words)))
                         
                         if should_highlight:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                            st.write(f"✅ HIGHLIGHT Table {table_num}, Row {row_num}, Cell {cell_num}: indices {run_start_idx}-{run_end_idx}")
                         
                         word_idx += len(run_words)
+    
+    st.write(f"\n### Final Count: Processed {word_idx} words from document")
+    st.write(f"Expected: {len(extracted_words)} words")
+    
+    if word_idx != len(extracted_words):
+        st.error(f"⚠️ MISMATCH! Document has {word_idx} words but extraction found {len(extracted_words)} words")
+        st.write("This mismatch is causing incorrect highlighting!")
     
     output = BytesIO()
     doc.save(output)
@@ -336,7 +361,7 @@ if doc1_file and doc2_file:
                     highlighted_doc1.close()
                     pdf_doc1.close()
                 else:
-                    pdf1_bytes = highlight_word_doc(doc1_file, diff_indices1)
+                    pdf1_bytes = highlight_word_doc(doc1_file, text1, diff_indices1)
                 
                 if is_pdf2:
                     highlighted_doc2 = highlight_pdf_words(pdf_doc2, word_data2, diff_indices2)
@@ -346,7 +371,7 @@ if doc1_file and doc2_file:
                     highlighted_doc2.close()
                     pdf_doc2.close()
                 else:
-                    pdf2_bytes = highlight_word_doc(doc2_file, diff_indices2)
+                    pdf2_bytes = highlight_word_doc(doc2_file, text2, diff_indices2)
             
             # Store results
             st.session_state.results = {
