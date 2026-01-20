@@ -22,54 +22,31 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def extract_text_from_word(docx_file):
-    """Extract text from Word document with position tracking"""
+    """Extract text from Word document EXACTLY as we'll traverse it for highlighting - run by run"""
     try:
         docx_file.seek(0)
         doc = Document(docx_file)
         
         all_words = []
-        word_positions = []  # Track where each word came from
-        word_idx = 0
         
-        # Extract from paragraphs - RUN BY RUN
-        for para_idx, para in enumerate(doc.paragraphs):
-            for run_idx, run in enumerate(para.runs):
+        # Extract from paragraphs - RUN BY RUN (not paragraph text)
+        for para in doc.paragraphs:
+            for run in para.runs:
                 run_text = run.text
                 if run_text.strip():
                     words = run_text.split()
-                    for word in words:
-                        all_words.append(word)
-                        word_positions.append({
-                            'index': word_idx,
-                            'type': 'paragraph',
-                            'para_idx': para_idx,
-                            'run_idx': run_idx,
-                            'word': word
-                        })
-                        word_idx += 1
+                    all_words.extend(words)
         
         # Extract from tables - RUN BY RUN
-        for table_idx, table in enumerate(doc.tables):
-            for row_idx, row in enumerate(table.rows):
-                for cell_idx, cell in enumerate(row.cells):
-                    for para_idx, para in enumerate(cell.paragraphs):
-                        for run_idx, run in enumerate(para.runs):
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
                             run_text = run.text
                             if run_text.strip():
                                 words = run_text.split()
-                                for word in words:
-                                    all_words.append(word)
-                                    word_positions.append({
-                                        'index': word_idx,
-                                        'type': 'table',
-                                        'table_idx': table_idx,
-                                        'row_idx': row_idx,
-                                        'cell_idx': cell_idx,
-                                        'para_idx': para_idx,
-                                        'run_idx': run_idx,
-                                        'word': word
-                                    })
-                                    word_idx += 1
+                                all_words.extend(words)
         
         # Join with spaces to create text
         extracted_text = ' '.join(all_words)
@@ -79,10 +56,10 @@ def extract_text_from_word(docx_file):
         elif len(all_words) < 10:
             st.warning(f"⚠️ Only {len(all_words)} words extracted from Word document.")
         
-        return extracted_text, word_positions
+        return extracted_text
     except Exception as e:
         st.error(f"Error reading Word document: {str(e)}")
-        return None, None
+        return None
 
 def extract_text_from_pdf(pdf_file):
     """Extract text from PDF with word-level coordinates"""
@@ -127,7 +104,7 @@ def normalize_word(word):
 def find_word_differences_with_sync(text1, text2):
     """
     Find word-level differences with improved syncing.
-    Only marks words as different if normalized content differs.
+    Uses a sliding window approach to better handle insertions/deletions.
     """
     # Split into words
     words1 = text1.split()
@@ -142,23 +119,25 @@ def find_word_differences_with_sync(text1, text2):
         None, 
         normalized1, 
         normalized2, 
-        autojunk=False
+        autojunk=False  # Don't ignore repeated elements
     )
     
-    # Get matching blocks
+    # Get matching blocks first to understand the structure
     matching_blocks = matcher.get_matching_blocks()
     
-    # Filter out very small matches that might be noise
+    # Filter out very small matches (less than 3 words) that might be noise
+    # Keep only substantial matching blocks
     significant_matches = []
     for match in matching_blocks:
-        if match.size >= 3 or match == matching_blocks[-1]:
+        # match is (i, j, size) where size is the length of the match
+        if match.size >= 3 or match == matching_blocks[-1]:  # Keep the final sentinel
             significant_matches.append(match)
     
     # If we filtered out too many matches, use original
     if len(significant_matches) < len(matching_blocks) * 0.3:
         significant_matches = matching_blocks
     
-    # Rebuild matcher
+    # Rebuild matcher with significant matches to get better opcodes
     matcher.matching_blocks = significant_matches
     
     # Sets to store indices of different words
@@ -168,17 +147,17 @@ def find_word_differences_with_sync(text1, text2):
     # Process each operation
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
+            # Words match - don't highlight
             continue
         elif tag == 'replace':
-            # Check each word individually in the replacement
+            # Check each word pair in the replacement to see if they're actually different
+            # (ignoring punctuation differences)
             min_len = min(i2 - i1, j2 - j1)
+            max_len = max(i2 - i1, j2 - j1)
             
-            # Compare words that align
+            # If the normalized words are the same, don't highlight
             for idx in range(min_len):
-                norm1 = normalized1[i1 + idx]
-                norm2 = normalized2[j1 + idx]
-                # Only mark as different if normalized words differ
-                if norm1 != norm2:
+                if normalized1[i1 + idx] != normalized2[j1 + idx]:
                     diff_indices1.add(i1 + idx)
                     diff_indices2.add(j1 + idx)
             
@@ -189,8 +168,10 @@ def find_word_differences_with_sync(text1, text2):
                 diff_indices2.update(range(j1 + min_len, j2))
                 
         elif tag == 'delete':
+            # Words only in doc1
             diff_indices1.update(range(i1, i2))
         elif tag == 'insert':
+            # Words only in doc2
             diff_indices2.update(range(j1, j2))
     
     # Calculate statistics
@@ -254,46 +235,74 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     
     return highlighted_doc
 
-def highlight_word_doc(docx_file, word_positions, diff_indices):
+def highlight_word_doc(docx_file, extracted_text, diff_indices):
     """
-    Highlight words in Word document using position tracking.
+    Highlight words in Word document using word-level precision.
+    Processes document in same order as extraction.
     """
     from docx.enum.text import WD_COLOR_INDEX
     
     docx_file.seek(0)
     doc = Document(docx_file)
     
-    # Create a set of positions that need highlighting for faster lookup
-    highlight_set = set(diff_indices)
+    # Get the words from extraction for comparison
+    extracted_words = extracted_text.split()
     
-    # Track which runs need highlighting
-    runs_to_highlight = {}  # Key: (type, indices...), Value: True
+    # Track current word index as we traverse the document
+    word_idx = 0
     
-    # Map diff indices to run positions
-    for pos in word_positions:
-        if pos['index'] in highlight_set:
-            if pos['type'] == 'paragraph':
-                key = ('para', pos['para_idx'], pos['run_idx'])
-            else:  # table
-                key = ('table', pos['table_idx'], pos['row_idx'], pos['cell_idx'], pos['para_idx'], pos['run_idx'])
-            runs_to_highlight[key] = True
-    
-    # Apply highlighting to paragraphs
-    for para_idx, para in enumerate(doc.paragraphs):
-        for run_idx, run in enumerate(para.runs):
-            key = ('para', para_idx, run_idx)
-            if key in runs_to_highlight:
+    # Process paragraphs
+    for para in doc.paragraphs:
+        para_text = para.text
+        if not para_text.strip():
+            continue
+        
+        # For each run in the paragraph
+        for run in para.runs:
+            run_text = run.text
+            if not run_text.strip():
+                continue
+            
+            run_words = run_text.split()
+            
+            # Check if ANY word in this run needs highlighting
+            # Only highlight if at least one word is truly different
+            words_to_check = []
+            for i in range(len(run_words)):
+                if (word_idx + i) in diff_indices:
+                    words_to_check.append(word_idx + i)
+            
+            if words_to_check:
                 run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            
+            word_idx += len(run_words)
     
-    # Apply highlighting to tables
-    for table_idx, table in enumerate(doc.tables):
-        for row_idx, row in enumerate(table.rows):
-            for cell_idx, cell in enumerate(row.cells):
-                for para_idx, para in enumerate(cell.paragraphs):
-                    for run_idx, run in enumerate(para.runs):
-                        key = ('table', table_idx, row_idx, cell_idx, para_idx, run_idx)
-                        if key in runs_to_highlight:
+    # Process tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    para_text = para.text
+                    if not para_text.strip():
+                        continue
+                    
+                    for run in para.runs:
+                        run_text = run.text
+                        if not run_text.strip():
+                            continue
+                        
+                        run_words = run_text.split()
+                        
+                        # Check if ANY word in this run needs highlighting
+                        words_to_check = []
+                        for i in range(len(run_words)):
+                            if (word_idx + i) in diff_indices:
+                                words_to_check.append(word_idx + i)
+                        
+                        if words_to_check:
                             run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                        
+                        word_idx += len(run_words)
     
     output = BytesIO()
     doc.save(output)
@@ -346,23 +355,15 @@ if doc1_file and doc2_file:
             
             if is_pdf1:
                 text1, word_data1, pdf_doc1 = extract_text_from_pdf(doc1_file)
-                word_positions1 = None
             else:
-                result = extract_text_from_word(doc1_file)
-                if result[0] is None:
-                    st.stop()
-                text1, word_positions1 = result
+                text1 = extract_text_from_word(doc1_file)
                 word_data1 = None
                 pdf_doc1 = None
             
             if is_pdf2:
                 text2, word_data2, pdf_doc2 = extract_text_from_pdf(doc2_file)
-                word_positions2 = None
             else:
-                result = extract_text_from_word(doc2_file)
-                if result[0] is None:
-                    st.stop()
-                text2, word_positions2 = result
+                text2 = extract_text_from_word(doc2_file)
                 word_data2 = None
                 pdf_doc2 = None
         
@@ -381,7 +382,7 @@ if doc1_file and doc2_file:
                     highlighted_doc1.close()
                     pdf_doc1.close()
                 else:
-                    pdf1_bytes = highlight_word_doc(doc1_file, word_positions1, diff_indices1)
+                    pdf1_bytes = highlight_word_doc(doc1_file, text1, diff_indices1)
                 
                 if is_pdf2:
                     highlighted_doc2 = highlight_pdf_words(pdf_doc2, word_data2, diff_indices2)
@@ -391,7 +392,7 @@ if doc1_file and doc2_file:
                     highlighted_doc2.close()
                     pdf_doc2.close()
                 else:
-                    pdf2_bytes = highlight_word_doc(doc2_file, word_positions2, diff_indices2)
+                    pdf2_bytes = highlight_word_doc(doc2_file, text2, diff_indices2)
             
             # Store results
             st.session_state.results = {
