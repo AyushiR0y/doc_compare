@@ -461,13 +461,21 @@ if doc1_file and doc2_file:
                 sample_indices1 = sorted(list(results['diff_indices1']))[:50]
                 for idx in sample_indices1:
                     if idx < len(results['words1']):
-                        st.text(f"Position {idx}: '{results['words1'][idx]}'")
+                        word1 = results['words1'][idx]
+                        word2 = results['words2'][idx] if idx < len(results['words2']) else "N/A"
+                        norm1 = normalize_word(word1)
+                        norm2 = normalize_word(word2) if idx < len(results['words2']) else "N/A"
+                        st.text(f"Pos {idx}: '{word1}' (norm: '{norm1}') vs '{word2}' (norm: '{norm2}')")
             with col_s2:
                 st.markdown(f"**Different words in Doc 2: {len(results['diff_indices2'])} total**")
                 sample_indices2 = sorted(list(results['diff_indices2']))[:50]
                 for idx in sample_indices2:
                     if idx < len(results['words2']):
-                        st.text(f"Position {idx}: '{results['words2'][idx]}'")
+                        word2 = results['words2'][idx]
+                        word1 = results['words1'][idx] if idx < len(results['words1']) else "N/A"
+                        norm2 = normalize_word(word2)
+                        norm1 = normalize_word(word1) if idx < len(results['words1']) else "N/A"
+                        st.text(f"Pos {idx}: '{word2}' (norm: '{norm2}') vs '{word1}' (norm: '{norm1}')")
 
 else:
     st.info("👆 Please upload both documents to begin comparison")
