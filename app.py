@@ -102,8 +102,8 @@ def normalize_word(word):
 
 def find_word_differences_with_sync(text1, text2):
     """
-    Find word-level differences with proper syncing.
-    Ignores case and punctuation differences.
+    Find word-level differences with improved syncing.
+    Uses a sliding window approach to better handle insertions/deletions.
     """
     # Split into words
     words1 = text1.split()
@@ -113,8 +113,31 @@ def find_word_differences_with_sync(text1, text2):
     normalized1 = [normalize_word(w) for w in words1]
     normalized2 = [normalize_word(w) for w in words2]
     
-    # Use SequenceMatcher on normalized words
-    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
+    # Use SequenceMatcher with better parameters for syncing
+    matcher = difflib.SequenceMatcher(
+        None, 
+        normalized1, 
+        normalized2, 
+        autojunk=False  # Don't ignore repeated elements
+    )
+    
+    # Get matching blocks first to understand the structure
+    matching_blocks = matcher.get_matching_blocks()
+    
+    # Filter out very small matches (less than 3 words) that might be noise
+    # Keep only substantial matching blocks
+    significant_matches = []
+    for match in matching_blocks:
+        # match is (i, j, size) where size is the length of the match
+        if match.size >= 3 or match == matching_blocks[-1]:  # Keep the final sentinel
+            significant_matches.append(match)
+    
+    # If we filtered out too many matches, use original
+    if len(significant_matches) < len(matching_blocks) * 0.3:
+        significant_matches = matching_blocks
+    
+    # Rebuild matcher with significant matches to get better opcodes
+    matcher.matching_blocks = significant_matches
     
     # Sets to store indices of different words
     diff_indices1 = set()
@@ -123,13 +146,33 @@ def find_word_differences_with_sync(text1, text2):
     # Process each operation
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == 'equal':
+            # Words match - don't highlight
             continue
         elif tag == 'replace':
+            # Only mark as different if the replacement is substantial
+            # If it's a small replacement within a larger match, might be formatting
+            replacement_size1 = i2 - i1
+            replacement_size2 = j2 - j1
+            
+            # If replacing just 1-2 words and they're very similar, skip
+            if replacement_size1 <= 2 and replacement_size2 <= 2:
+                # Check if words are similar (might just be formatting difference)
+                similar = True
+                for idx in range(min(replacement_size1, replacement_size2)):
+                    if normalized1[i1 + idx] != normalized2[j1 + idx]:
+                        similar = False
+                        break
+                
+                if similar:
+                    continue
+            
             diff_indices1.update(range(i1, i2))
             diff_indices2.update(range(j1, j2))
         elif tag == 'delete':
+            # Words only in doc1
             diff_indices1.update(range(i1, i2))
         elif tag == 'insert':
+            # Words only in doc2
             diff_indices2.update(range(j1, j2))
     
     # Calculate statistics
@@ -142,7 +185,8 @@ def find_word_differences_with_sync(text1, text2):
         'total_words2': len(words2),
         'equal_blocks': total_equal_blocks,
         'diff_words1': len(diff_indices1),
-        'diff_words2': len(diff_indices2)
+        'diff_words2': len(diff_indices2),
+        'significant_matches': len(significant_matches)
     }
     
     return diff_indices1, diff_indices2, words1, words2, sync_info
