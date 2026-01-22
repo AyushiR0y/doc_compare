@@ -144,17 +144,29 @@ def extract_text_from_pdf(pdf_file):
         return None, None, None
 
 def normalize_word(word):
-    """Normalize word by removing punctuation and converting to lowercase for comparison"""
-    # Remove common punctuation but preserve the word
-    word = word.strip('.,;:!?"\'-()[]{}')
-    return word.lower()
+    """Normalize word by removing ALL punctuation and converting to lowercase for comparison"""
+    # Remove ALL punctuation including brackets, quotes, dashes, periods, etc.
+    # This ensures words are compared purely on alphanumeric content
+    import string
+    # Create a translation table that removes all punctuation
+    translator = str.maketrans('', '', string.punctuation)
+    # Remove all punctuation and convert to lowercase
+    normalized = word.translate(translator).lower()
+    # Also handle special unicode quotes and dashes
+    normalized = normalized.replace('"', '').replace('"', '').replace(''', '').replace(''', '')
+    normalized = normalized.replace('–', '').replace('—', '')
+    return normalized
 
 def normalize_for_comparison(text):
-    """Normalize text for comparison - removes punctuation differences"""
+    """Normalize text for comparison - removes ALL punctuation differences"""
     # Split into words
     words = text.split()
-    # Normalize each word
-    normalized = [normalize_word(w) for w in words if normalize_word(w)]
+    # Normalize each word and filter out empty strings (pure punctuation)
+    normalized = []
+    for w in words:
+        norm_word = normalize_word(w)
+        if norm_word:  # Only include if there's actual content left after removing punctuation
+            normalized.append(norm_word)
     return normalized
 
 def find_word_differences_optimized(text1, text2):
@@ -241,18 +253,29 @@ def find_word_differences_optimized(text1, text2):
 
 def find_sentence_differences(text1, text2):
     """
-    Find differences at sentence level, excluding punctuation differences.
+    Find differences at sentence level, excluding ALL punctuation differences.
     Returns sets of sentence indices that differ.
     """
-    # Split into sentences
-    sentences1 = re.split(r'[.!?]+\s+', text1)
-    sentences2 = re.split(r'[.!?]+\s+', text2)
+    # Split into sentences - handle multiple sentence terminators
+    sentences1 = re.split(r'[.!?]+(?:\s+|$)', text1)
+    sentences2 = re.split(r'[.!?]+(?:\s+|$)', text2)
     
-    # Normalize sentences for comparison
-    normalized1 = [' '.join(normalize_for_comparison(s)) for s in sentences1]
-    normalized2 = [' '.join(normalize_for_comparison(s)) for s in sentences2]
+    # Clean up empty sentences
+    sentences1 = [s.strip() for s in sentences1 if s.strip()]
+    sentences2 = [s.strip() for s in sentences2 if s.strip()]
     
-    # Use SequenceMatcher
+    # Normalize sentences for comparison - remove ALL punctuation
+    normalized1 = []
+    for s in sentences1:
+        norm_words = normalize_for_comparison(s)
+        normalized1.append(' '.join(norm_words))
+    
+    normalized2 = []
+    for s in sentences2:
+        norm_words = normalize_for_comparison(s)
+        normalized2.append(' '.join(norm_words))
+    
+    # Use SequenceMatcher with higher threshold for better matching
     matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
     opcodes = matcher.get_opcodes()
     
@@ -261,8 +284,28 @@ def find_sentence_differences(text1, text2):
     
     for tag, i1, i2, j1, j2 in opcodes:
         if tag != 'equal':
-            diff_indices1.update(range(i1, i2))
-            diff_indices2.update(range(j1, j2))
+            # Double-check that sentences are actually different
+            # (not just due to residual punctuation issues)
+            for i in range(i1, i2):
+                if i < len(normalized1):
+                    # Check if this sentence has actual content differences
+                    has_real_diff = True
+                    if tag == 'replace' and (j1 + (i - i1)) < len(normalized2):
+                        j = j1 + (i - i1)
+                        if normalized1[i] == normalized2[j]:
+                            has_real_diff = False
+                    if has_real_diff:
+                        diff_indices1.add(i)
+            
+            for j in range(j1, j2):
+                if j < len(normalized2):
+                    has_real_diff = True
+                    if tag == 'replace' and (i1 + (j - j1)) < len(normalized1):
+                        i = i1 + (j - j1)
+                        if normalized1[i] == normalized2[j]:
+                            has_real_diff = False
+                    if has_real_diff:
+                        diff_indices2.add(j)
     
     return diff_indices1, diff_indices2, sentences1, sentences2
 
