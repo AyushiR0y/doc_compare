@@ -4,7 +4,6 @@ from io import BytesIO
 import fitz  # PyMuPDF
 from docx import Document
 import re
-import subprocess
 import os
 import tempfile
 
@@ -25,38 +24,132 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def convert_word_to_pdf(docx_file):
-    """Convert Word document to PDF using LibreOffice"""
+    """Convert Word document to PDF using docx2pdf"""
     try:
+        # Use docx2pdf for cloud compatibility
+        import docx2pdf
+        
         with tempfile.TemporaryDirectory() as tmpdir:
             # Save the docx to temp file
             docx_path = os.path.join(tmpdir, "input.docx")
+            pdf_path = os.path.join(tmpdir, "output.pdf")
+            
             with open(docx_path, 'wb') as f:
                 docx_file.seek(0)
                 f.write(docx_file.read())
             
-            # Convert using LibreOffice
-            result = subprocess.run(
-                ['soffice', '--headless', '--convert-to', 'pdf', '--outdir', tmpdir, docx_path],
-                capture_output=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                st.error(f"Conversion failed: {result.stderr.decode()}")
-                return None
+            # Convert using docx2pdf
+            try:
+                docx2pdf.convert(docx_path, pdf_path)
+            except Exception as conv_error:
+                st.error(f"❌ Conversion failed: {str(conv_error)}")
+                st.info("Note: docx2pdf requires Microsoft Word or LibreOffice. Trying alternative method...")
+                
+                # Fallback to reportlab-based conversion
+                return convert_word_to_pdf_reportlab(docx_file)
             
             # Read the generated PDF
-            pdf_path = os.path.join(tmpdir, "input.pdf")
             if os.path.exists(pdf_path):
                 with open(pdf_path, 'rb') as f:
                     pdf_bytes = BytesIO(f.read())
                 return pdf_bytes
             else:
-                st.error("PDF file was not generated")
-                return None
+                st.error("❌ PDF file was not generated.")
+                return convert_word_to_pdf_reportlab(docx_file)
                 
+    except ImportError:
+        # If docx2pdf is not available, use reportlab fallback
+        return convert_word_to_pdf_reportlab(docx_file)
     except Exception as e:
-        st.error(f"Error converting Word to PDF: {str(e)}")
+        st.error(f"❌ Error converting Word to PDF: {str(e)}")
+        return convert_word_to_pdf_reportlab(docx_file)
+
+def convert_word_to_pdf_reportlab(docx_file):
+    """Fallback: Convert Word to PDF using reportlab - works on Streamlit Cloud"""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib import colors
+        from docx import Document
+        
+        st.info("ℹ️ Using fallback PDF conversion method (reportlab)...")
+        
+        # Extract text from Word
+        docx_file.seek(0)
+        doc = Document(docx_file)
+        
+        # Create PDF
+        pdf_buffer = BytesIO()
+        pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter,
+                                    leftMargin=1*inch, rightMargin=1*inch,
+                                    topMargin=1*inch, bottomMargin=1*inch)
+        
+        # Container for PDF elements
+        elements = []
+        styles = getSampleStyleSheet()
+        
+        # Custom style
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=11,
+            leading=14,
+        )
+        
+        # Process paragraphs
+        for para in doc.paragraphs:
+            if para.text.strip():
+                # Check if it's a heading
+                if para.style.name.startswith('Heading'):
+                    level = para.style.name.replace('Heading', '').strip()
+                    if level == '1':
+                        style = styles['Heading1']
+                    elif level == '2':
+                        style = styles['Heading2']
+                    else:
+                        style = styles['Heading3']
+                    elements.append(Paragraph(para.text, style))
+                else:
+                    elements.append(Paragraph(para.text, normal_style))
+                elements.append(Spacer(1, 0.1*inch))
+        
+        # Process tables
+        for table in doc.tables:
+            table_data = []
+            for row in table.rows:
+                row_data = []
+                for cell in row.cells:
+                    cell_text = ' '.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
+                    row_data.append(cell_text)
+                table_data.append(row_data)
+            
+            if table_data:
+                # Create table
+                pdf_table = Table(table_data)
+                pdf_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ]))
+                elements.append(pdf_table)
+                elements.append(Spacer(1, 0.2*inch))
+        
+        # Build PDF
+        pdf_doc.build(elements)
+        pdf_buffer.seek(0)
+        
+        return pdf_buffer
+        
+    except Exception as e:
+        st.error(f"❌ Fallback conversion also failed: {str(e)}")
+        st.info("Please convert your Word document to PDF manually and upload both as PDFs.")
         return None
 
 def extract_text_from_word(docx_file):
@@ -689,7 +782,7 @@ if doc1_file and doc2_file:
         is_mixed_format = (is_pdf1 and not is_pdf2) or (not is_pdf1 and is_pdf2)
         
         if is_mixed_format:
-            st.info("🔄 Mixed format detected (PDF vs Word). Converting Word to PDF for comparison...")
+            st.warning("🔄 Mixed format detected (PDF vs Word). This feature requires LibreOffice to convert Word to PDF.")
             
             if is_pdf1:
                 # PDF is doc1, Word is doc2
@@ -701,6 +794,11 @@ if doc1_file and doc2_file:
             if results:
                 st.session_state.results = results
                 st.session_state.comparison_done = True
+            else:
+                st.error("❌ Cannot compare PDF vs Word without LibreOffice. Please either:")
+                st.markdown("- Install LibreOffice: `sudo apt-get install libreoffice-writer --no-install-recommends`")
+                st.markdown("- Or convert your Word document to PDF manually and upload both as PDFs")
+                st.session_state.comparison_done = False
         
         else:
             # Original logic for same-format comparison

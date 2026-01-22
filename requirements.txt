@@ -1,3 +1,5 @@
 streamlit
-pymupdf
+PyMuPDF
 python-docx
+docx2pdf
+reportlab
