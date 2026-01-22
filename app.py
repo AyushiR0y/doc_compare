@@ -24,48 +24,7 @@ with col2:
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
 def convert_word_to_pdf(docx_file):
-    """Convert Word document to PDF using docx2pdf"""
-    try:
-        # Use docx2pdf for cloud compatibility
-        import docx2pdf
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Save the docx to temp file
-            docx_path = os.path.join(tmpdir, "input.docx")
-            pdf_path = os.path.join(tmpdir, "output.pdf")
-            
-            with open(docx_path, 'wb') as f:
-                docx_file.seek(0)
-                f.write(docx_file.read())
-            
-            # Convert using docx2pdf
-            try:
-                docx2pdf.convert(docx_path, pdf_path)
-            except Exception as conv_error:
-                st.error(f"❌ Conversion failed: {str(conv_error)}")
-                st.info("Note: docx2pdf requires Microsoft Word or LibreOffice. Trying alternative method...")
-                
-                # Fallback to reportlab-based conversion
-                return convert_word_to_pdf_reportlab(docx_file)
-            
-            # Read the generated PDF
-            if os.path.exists(pdf_path):
-                with open(pdf_path, 'rb') as f:
-                    pdf_bytes = BytesIO(f.read())
-                return pdf_bytes
-            else:
-                st.error("❌ PDF file was not generated.")
-                return convert_word_to_pdf_reportlab(docx_file)
-                
-    except ImportError:
-        # If docx2pdf is not available, use reportlab fallback
-        return convert_word_to_pdf_reportlab(docx_file)
-    except Exception as e:
-        st.error(f"❌ Error converting Word to PDF: {str(e)}")
-        return convert_word_to_pdf_reportlab(docx_file)
-
-def convert_word_to_pdf_reportlab(docx_file):
-    """Fallback: Convert Word to PDF using reportlab - works on Streamlit Cloud"""
+    """Convert Word to PDF using pure Python (reportlab) - works on Streamlit Cloud"""
     try:
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -74,7 +33,7 @@ def convert_word_to_pdf_reportlab(docx_file):
         from reportlab.lib import colors
         from docx import Document
         
-        st.info("ℹ️ Using fallback PDF conversion method (reportlab)...")
+        st.info("ℹ️ Converting Word to PDF (using pure Python method)...")
         
         # Extract text from Word
         docx_file.seek(0)
@@ -148,7 +107,7 @@ def convert_word_to_pdf_reportlab(docx_file):
         return pdf_buffer
         
     except Exception as e:
-        st.error(f"❌ Fallback conversion also failed: {str(e)}")
+        st.error(f"❌ Conversion failed: {str(e)}")
         st.info("Please convert your Word document to PDF manually and upload both as PDFs.")
         return None
 
