@@ -23,94 +23,6 @@ with col2:
     st.subheader("Document 2")
     doc2_file = st.file_uploader("Upload second document", type=['pdf', 'docx'], key="doc2")
 
-def convert_word_to_pdf(docx_file):
-    """Convert Word to PDF using pure Python (reportlab) - works on Streamlit Cloud"""
-    try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        from reportlab.lib import colors
-        from docx import Document
-        
-        st.info("ℹ️ Converting Word to PDF (using pure Python method)...")
-        
-        # Extract text from Word
-        docx_file.seek(0)
-        doc = Document(docx_file)
-        
-        # Create PDF
-        pdf_buffer = BytesIO()
-        pdf_doc = SimpleDocTemplate(pdf_buffer, pagesize=letter,
-                                    leftMargin=1*inch, rightMargin=1*inch,
-                                    topMargin=1*inch, bottomMargin=1*inch)
-        
-        # Container for PDF elements
-        elements = []
-        styles = getSampleStyleSheet()
-        
-        # Custom style
-        normal_style = ParagraphStyle(
-            'CustomNormal',
-            parent=styles['Normal'],
-            fontSize=11,
-            leading=14,
-        )
-        
-        # Process paragraphs
-        for para in doc.paragraphs:
-            if para.text.strip():
-                # Check if it's a heading
-                if para.style.name.startswith('Heading'):
-                    level = para.style.name.replace('Heading', '').strip()
-                    if level == '1':
-                        style = styles['Heading1']
-                    elif level == '2':
-                        style = styles['Heading2']
-                    else:
-                        style = styles['Heading3']
-                    elements.append(Paragraph(para.text, style))
-                else:
-                    elements.append(Paragraph(para.text, normal_style))
-                elements.append(Spacer(1, 0.1*inch))
-        
-        # Process tables
-        for table in doc.tables:
-            table_data = []
-            for row in table.rows:
-                row_data = []
-                for cell in row.cells:
-                    cell_text = ' '.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
-                    row_data.append(cell_text)
-                table_data.append(row_data)
-            
-            if table_data:
-                # Create table
-                pdf_table = Table(table_data)
-                pdf_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                ]))
-                elements.append(pdf_table)
-                elements.append(Spacer(1, 0.2*inch))
-        
-        # Build PDF
-        pdf_doc.build(elements)
-        pdf_buffer.seek(0)
-        
-        return pdf_buffer
-        
-    except Exception as e:
-        st.error(f"❌ Conversion failed: {str(e)}")
-        st.info("Please convert your Word document to PDF manually and upload both as PDFs.")
-        return None
-
 def extract_text_from_word(docx_file):
     """Extract text from Word document maintaining structure"""
     try:
@@ -412,42 +324,6 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     
     return highlighted_doc
 
-def highlight_pdf_sentences(doc, word_data, sentence_diff_indices, sentences):
-    """Highlight entire sentences in PDF"""
-    highlighted_doc = fitz.open()
-    
-    # Build a word-to-sentence mapping
-    word_to_sentence = []
-    word_count = 0
-    
-    for sent_idx, sentence in enumerate(sentences):
-        sent_words = sentence.split()
-        for _ in sent_words:
-            word_to_sentence.append(sent_idx)
-    
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        new_page = highlighted_doc.new_page(width=page.rect.width, height=page.rect.height)
-        new_page.show_pdf_page(new_page.rect, doc, page_num)
-        
-        # Highlight words that belong to different sentences
-        for word_idx, word_info in enumerate(word_data):
-            if word_info['page'] == page_num:
-                if word_idx < len(word_to_sentence):
-                    sent_idx = word_to_sentence[word_idx]
-                    if sent_idx in sentence_diff_indices:
-                        bbox = word_info['bbox']
-                        rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-                        
-                        try:
-                            highlight = new_page.add_highlight_annot(rect)
-                            highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
-                            highlight.update()
-                        except:
-                            pass
-    
-    return highlighted_doc
-
 def highlight_word_doc(docx_file, extracted_text, diff_indices):
     """
     Highlight words in Word document with precise run-level matching.
@@ -614,67 +490,62 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
 
 def compare_pdf_vs_word(pdf_file, word_file, pdf_is_doc1=True):
     """
-    Compare PDF vs Word document by converting Word to PDF first.
-    Returns comparison results using the sync strategy.
+    Compare PDF vs Word document without conversion.
+    Extract text from both, compare, and highlight differences in original formats.
     """
-    with st.spinner("Converting Word document to PDF..."):
-        converted_pdf = convert_word_to_pdf(word_file)
-        if not converted_pdf:
-            return None
+    with st.spinner("Extracting text from documents..."):
+        # Extract from PDF
+        text_pdf, word_data_pdf, pdf_doc = extract_text_from_pdf(pdf_file)
+        
+        # Extract from Word
+        text_word = extract_text_from_word(word_file)
     
-    with st.spinner("Extracting text from both PDFs..."):
-        # Extract from original PDF
-        if pdf_is_doc1:
-            text1, word_data1, pdf_doc1 = extract_text_from_pdf(pdf_file)
-            text2, word_data2, pdf_doc2 = extract_text_from_pdf(converted_pdf)
-        else:
-            text1, word_data1, pdf_doc1 = extract_text_from_pdf(converted_pdf)
-            text2, word_data2, pdf_doc2 = extract_text_from_pdf(pdf_file)
-    
-    if not text1 or not text2:
+    if not text_pdf or not text_word:
         return None
     
+    # Assign texts based on which is doc1
+    if pdf_is_doc1:
+        text1, text2 = text_pdf, text_word
+        word_data1 = word_data_pdf
+        word_data2 = None
+    else:
+        text1, text2 = text_word, text_pdf
+        word_data1 = None
+        word_data2 = word_data_pdf
+    
     with st.spinner("Finding differences (excluding punctuation)..."):
-        # Word-level comparison
         diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_optimized(text1, text2)
         html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2)
-        
-        # Sentence-level comparison
-        sent_diff1, sent_diff2, sentences1, sentences2 = find_sentence_differences(text1, text2)
     
     with st.spinner("Generating highlighted documents..."):
-        # Generate word-level highlights
-        highlighted_doc1_words = highlight_pdf_words(pdf_doc1, word_data1, diff_indices1)
-        highlighted_doc2_words = highlight_pdf_words(pdf_doc2, word_data2, diff_indices2)
+        # Highlight PDF
+        if pdf_is_doc1:
+            highlighted_pdf = highlight_pdf_words(pdf_doc, word_data_pdf, diff_indices1)
+            pdf_bytes = BytesIO()
+            highlighted_pdf.save(pdf_bytes)
+            pdf_bytes.seek(0)
+            highlighted_pdf.close()
+            
+            # Highlight Word
+            word_bytes = highlight_word_doc(word_file, text_word, diff_indices2)
+            
+            doc1_bytes = pdf_bytes
+            doc2_bytes = word_bytes
+        else:
+            # Highlight Word
+            word_bytes = highlight_word_doc(word_file, text_word, diff_indices1)
+            
+            # Highlight PDF
+            highlighted_pdf = highlight_pdf_words(pdf_doc, word_data_pdf, diff_indices2)
+            pdf_bytes = BytesIO()
+            highlighted_pdf.save(pdf_bytes)
+            pdf_bytes.seek(0)
+            highlighted_pdf.close()
+            
+            doc1_bytes = word_bytes
+            doc2_bytes = pdf_bytes
         
-        # Generate sentence-level highlights
-        highlighted_doc1_sents = highlight_pdf_sentences(pdf_doc1, word_data1, sent_diff1, sentences1)
-        highlighted_doc2_sents = highlight_pdf_sentences(pdf_doc2, word_data2, sent_diff2, sentences2)
-        
-        # Save to BytesIO
-        pdf1_words_bytes = BytesIO()
-        highlighted_doc1_words.save(pdf1_words_bytes)
-        pdf1_words_bytes.seek(0)
-        
-        pdf2_words_bytes = BytesIO()
-        highlighted_doc2_words.save(pdf2_words_bytes)
-        pdf2_words_bytes.seek(0)
-        
-        pdf1_sents_bytes = BytesIO()
-        highlighted_doc1_sents.save(pdf1_sents_bytes)
-        pdf1_sents_bytes.seek(0)
-        
-        pdf2_sents_bytes = BytesIO()
-        highlighted_doc2_sents.save(pdf2_sents_bytes)
-        pdf2_sents_bytes.seek(0)
-        
-        # Cleanup
-        highlighted_doc1_words.close()
-        highlighted_doc2_words.close()
-        highlighted_doc1_sents.close()
-        highlighted_doc2_sents.close()
-        pdf_doc1.close()
-        pdf_doc2.close()
+        pdf_doc.close()
     
     return {
         'text1': text1,
@@ -685,13 +556,12 @@ def compare_pdf_vs_word(pdf_file, word_file, pdf_is_doc1=True):
         'words2': words2,
         'html1': html1,
         'html2': html2,
-        'pdf1_words_bytes': pdf1_words_bytes,
-        'pdf2_words_bytes': pdf2_words_bytes,
-        'pdf1_sents_bytes': pdf1_sents_bytes,
-        'pdf2_sents_bytes': pdf2_sents_bytes,
+        'pdf1_bytes': doc1_bytes,
+        'pdf2_bytes': doc2_bytes,
+        'is_pdf1': pdf_is_doc1,
+        'is_pdf2': not pdf_is_doc1,
         'sync_info': sync_info,
-        'is_mixed_format': True,
-        'pdf_is_doc1': pdf_is_doc1
+        'is_mixed_format': True
     }
 
 # CSS for styling
@@ -741,7 +611,7 @@ if doc1_file and doc2_file:
         is_mixed_format = (is_pdf1 and not is_pdf2) or (not is_pdf1 and is_pdf2)
         
         if is_mixed_format:
-            st.warning("🔄 Mixed format detected (PDF vs Word). This feature requires LibreOffice to convert Word to PDF.")
+            st.info("🔄 Mixed format detected (PDF vs Word). Comparing text content directly...")
             
             if is_pdf1:
                 # PDF is doc1, Word is doc2
@@ -753,11 +623,6 @@ if doc1_file and doc2_file:
             if results:
                 st.session_state.results = results
                 st.session_state.comparison_done = True
-            else:
-                st.error("❌ Cannot compare PDF vs Word without LibreOffice. Please either:")
-                st.markdown("- Install LibreOffice: `sudo apt-get install libreoffice-writer --no-install-recommends`")
-                st.markdown("- Or convert your Word document to PDF manually and upload both as PDFs")
-                st.session_state.comparison_done = False
         
         else:
             # Original logic for same-format comparison
@@ -848,74 +713,29 @@ if doc1_file and doc2_file:
         
         # Download buttons
         st.markdown("### Download Highlighted Documents")
+        col_dl1, col_dl2 = st.columns(2)
         
-        if results.get('is_mixed_format', False):
-            # Mixed format comparison - provide both word and sentence level highlights
-            st.markdown("**Word-level highlights:**")
-            col_dl1, col_dl2 = st.columns(2)
-            
-            with col_dl1:
-                st.download_button(
-                    label=f"⬇️ Download Doc 1 - Words (Highlighted PDF)",
-                    data=results['pdf1_words_bytes'].getvalue(),
-                    file_name=f"doc1_highlighted_words.pdf",
-                    mime="application/pdf"
-                )
-            
-            with col_dl2:
-                st.download_button(
-                    label=f"⬇️ Download Doc 2 - Words (Highlighted PDF)",
-                    data=results['pdf2_words_bytes'].getvalue(),
-                    file_name=f"doc2_highlighted_words.pdf",
-                    mime="application/pdf"
-                )
-            
-            st.markdown("**Sentence-level highlights:**")
-            col_dl3, col_dl4 = st.columns(2)
-            
-            with col_dl3:
-                st.download_button(
-                    label=f"⬇️ Download Doc 1 - Sentences (Highlighted PDF)",
-                    data=results['pdf1_sents_bytes'].getvalue(),
-                    file_name=f"doc1_highlighted_sentences.pdf",
-                    mime="application/pdf"
-                )
-            
-            with col_dl4:
-                st.download_button(
-                    label=f"⬇️ Download Doc 2 - Sentences (Highlighted PDF)",
-                    data=results['pdf2_sents_bytes'].getvalue(),
-                    file_name=f"doc2_highlighted_sentences.pdf",
-                    mime="application/pdf"
-                )
-        else:
-            # Same format comparison - original download buttons
-            col_dl1, col_dl2 = st.columns(2)
-            
-            with col_dl1:
-                file_ext1 = 'pdf' if results.get('is_pdf1', False) else 'docx'
-                st.download_button(
-                    label=f"⬇️ Download Doc 1 (Highlighted .{file_ext1})",
-                    data=results['pdf1_bytes'].getvalue(),
-                    file_name=f"doc1_highlighted.{file_ext1}",
-                    mime="application/pdf" if results.get('is_pdf1', False) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
-            
-            with col_dl2:
-                file_ext2 = 'pdf' if results.get('is_pdf2', False) else 'docx'
-                st.download_button(
-                    label=f"⬇️ Download Doc 2 (Highlighted .{file_ext2})",
-                    data=results['pdf2_bytes'].getvalue(),
-                    file_name=f"doc2_highlighted.{file_ext2}",
-                    mime="application/pdf" if results.get('is_pdf2', False) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+        with col_dl1:
+            file_ext1 = 'pdf' if results.get('is_pdf1', False) else 'docx'
+            st.download_button(
+                label=f"⬇️ Download Doc 1 (Highlighted .{file_ext1})",
+                data=results['pdf1_bytes'].getvalue(),
+                file_name=f"doc1_highlighted.{file_ext1}",
+                mime="application/pdf" if results.get('is_pdf1', False) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+        
+        with col_dl2:
+            file_ext2 = 'pdf' if results.get('is_pdf2', False) else 'docx'
+            st.download_button(
+                label=f"⬇️ Download Doc 2 (Highlighted .{file_ext2})",
+                data=results['pdf2_bytes'].getvalue(),
+                file_name=f"doc2_highlighted.{file_ext2}",
+                mime="application/pdf" if results.get('is_pdf2', False) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
         
         # Display text comparison
         st.markdown("### Text Comparison Preview")
-        if results.get('is_mixed_format', False):
-            st.markdown("🟡 **Yellow highlight** = Differences (punctuation differences excluded) | Mixed format: Word document converted to PDF for comparison")
-        else:
-            st.markdown("🟡 **Yellow highlight** = Regular text differences | 🟠 **Light Orange highlight** (PDF) = Table differences | 🟢 **Green highlight** (Word) = Table differences | Punctuation differences excluded")
+        st.markdown("🟡 **Yellow highlight** = Regular text differences | 🟠 **Light Orange highlight** (PDF) = Table differences | 🟢 **Green highlight** (Word) = Table differences | Punctuation differences excluded")
         
         col_diff1, col_diff2 = st.columns(2)
         
@@ -955,4 +775,4 @@ st.markdown("---")
 st.markdown("💡 **Precise word-by-word comparison** - Highlights only the words that actually differ between documents (punctuation differences excluded)")
 st.markdown("🔸 For PDFs: Yellow = regular text differences, Light Orange = table differences")
 st.markdown("🔸 For Word docs: Yellow = regular text differences, Green = table differences")
-st.markdown("🔸 For PDF vs Word: Automatically converts Word to PDF and provides both word-level and sentence-level highlights")
+st.markdown("🔸 For PDF vs Word: Compares text content directly without format conversion")

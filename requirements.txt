@@ -2,4 +2,3 @@ streamlit
 PyMuPDF
 python-docx
 
-reportlab
