@@ -136,7 +136,7 @@ def normalize_for_comparison(text):
 def find_word_differences_optimized(text1, text2):
     """
     Optimized word-level difference detection with better alignment handling.
-    Uses a more sophisticated approach to handle insertions and deletions.
+    Uses content-based matching to avoid drift in long documents.
     Excludes punctuation-only differences.
     """
     # Split into words
@@ -153,12 +153,11 @@ def find_word_differences_optimized(text1, text2):
     # Get the opcodes
     opcodes = matcher.get_opcodes()
     
-    # Sets to store indices of different words
-    diff_indices1 = set()
-    diff_indices2 = set()
+    # Sets to store indices of different words in NORMALIZED space
+    diff_indices_norm1 = set()
+    diff_indices_norm2 = set()
     
     # Create mapping from normalized to original indices
-    # This is needed because normalized list may be shorter (punctuation removed)
     norm_to_orig1 = []
     norm_to_orig2 = []
     
@@ -170,7 +169,7 @@ def find_word_differences_optimized(text1, text2):
         if normalize_word(word):
             norm_to_orig2.append(i)
     
-    # Process each operation with refined logic
+    # Process each operation
     for tag, i1, i2, j1, j2 in opcodes:
         if tag == 'equal':
             # Words match - don't highlight
@@ -182,25 +181,109 @@ def find_word_differences_optimized(text1, text2):
             
             # Only mark as different if normalized content actually differs
             if range1_words != range2_words:
-                # Map back to original indices
-                for idx in range(i1, i2):
-                    if idx < len(norm_to_orig1):
-                        diff_indices1.add(norm_to_orig1[idx])
-                for idx in range(j1, j2):
-                    if idx < len(norm_to_orig2):
-                        diff_indices2.add(norm_to_orig2[idx])
+                diff_indices_norm1.update(range(i1, i2))
+                diff_indices_norm2.update(range(j1, j2))
         elif tag == 'delete':
             # Words only in doc1
-            for idx in range(i1, i2):
-                if idx < len(norm_to_orig1):
-                    diff_indices1.add(norm_to_orig1[idx])
+            diff_indices_norm1.update(range(i1, i2))
         elif tag == 'insert':
             # Words only in doc2
-            for idx in range(j1, j2):
-                if idx < len(norm_to_orig2):
-                    diff_indices2.add(norm_to_orig2[idx])
+            diff_indices_norm2.update(range(j1, j2))
     
-    # Calculate statistics
+    # Map back to original word indices
+    diff_indices1 = set()
+    diff_indices2 = set()
+    
+    for norm_idx in diff_indices_norm1:
+        if norm_idx < len(norm_to_orig1):
+            diff_indices1.add(norm_to_orig1[norm_idx])
+    
+    for norm_idx in diff_indices_norm2:
+        if norm_idx < len(norm_to_orig2):
+            diff_indices2.add(norm_to_orig2[norm_idx])
+    
+    # CRITICAL: Remove false positives where both docs have same word at same position
+    # This happens when alignment drifts
+    validated_diff1 = set()
+    validated_diff2 = set()
+    
+    # Create a reverse mapping to find normalized positions from original positions
+    orig_to_norm1 = {}
+    for norm_idx, orig_idx in enumerate(norm_to_orig1):
+        orig_to_norm1[orig_idx] = norm_idx
+    
+    orig_to_norm2 = {}
+    for norm_idx, orig_idx in enumerate(norm_to_orig2):
+        orig_to_norm2[orig_idx] = norm_idx
+    
+    # Validate diff_indices1
+    for orig_idx in diff_indices1:
+        if orig_idx < len(words1):
+            word1_norm = normalize_word(words1[orig_idx])
+            
+            # Find corresponding position in doc2
+            if orig_idx in orig_to_norm1:
+                norm_idx1 = orig_to_norm1[orig_idx]
+                
+                # Check if this normalized index has a corresponding position in doc2
+                # by looking at the opcodes to find the mapping
+                is_truly_different = True
+                
+                for tag, i1, i2, j1, j2 in opcodes:
+                    if tag == 'equal' and i1 <= norm_idx1 < i2:
+                        # This word is in an equal block, find its pair
+                        offset = norm_idx1 - i1
+                        norm_idx2 = j1 + offset
+                        
+                        if norm_idx2 < len(norm_to_orig2):
+                            orig_idx2 = norm_to_orig2[norm_idx2]
+                            if orig_idx2 < len(words2):
+                                word2_norm = normalize_word(words2[orig_idx2])
+                                # If words are actually the same, don't highlight
+                                if word1_norm == word2_norm:
+                                    is_truly_different = False
+                                    break
+                
+                if is_truly_different:
+                    validated_diff1.add(orig_idx)
+            else:
+                validated_diff1.add(orig_idx)
+    
+    # Validate diff_indices2
+    for orig_idx in diff_indices2:
+        if orig_idx < len(words2):
+            word2_norm = normalize_word(words2[orig_idx])
+            
+            # Find corresponding position in doc1
+            if orig_idx in orig_to_norm2:
+                norm_idx2 = orig_to_norm2[orig_idx]
+                
+                is_truly_different = True
+                
+                for tag, i1, i2, j1, j2 in opcodes:
+                    if tag == 'equal' and j1 <= norm_idx2 < j2:
+                        # This word is in an equal block, find its pair
+                        offset = norm_idx2 - j1
+                        norm_idx1 = i1 + offset
+                        
+                        if norm_idx1 < len(norm_to_orig1):
+                            orig_idx1 = norm_to_orig1[norm_idx1]
+                            if orig_idx1 < len(words1):
+                                word1_norm = normalize_word(words1[orig_idx1])
+                                # If words are actually the same, don't highlight
+                                if word1_norm == word2_norm:
+                                    is_truly_different = False
+                                    break
+                
+                if is_truly_different:
+                    validated_diff2.add(orig_idx)
+            else:
+                validated_diff2.add(orig_idx)
+    
+    diff_indices1 = validated_diff1
+    diff_indices2 = validated_diff2
+    
+    # Calculate statistics based on normalized words
     total_matching_words = sum(i2 - i1 for tag, i1, i2, _, _ in opcodes if tag == 'equal')
     total_equal_blocks = sum(1 for tag, _, _, _, _ in opcodes if tag == 'equal')
     
