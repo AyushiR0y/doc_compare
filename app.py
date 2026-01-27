@@ -119,172 +119,92 @@ def normalize_word(word):
     normalized = normalized.replace('–', '').replace('—', '')
     return normalized
 
-def normalize_for_comparison(text):
-    """Normalize text for comparison - removes ALL punctuation differences"""
-    # Split into words
+def normalize_text(text):
+    """Normalize entire text for comparison"""
     words = text.split()
-    # Normalize each word and filter out empty strings (pure punctuation)
-    normalized = []
+    normalized_words = []
     for w in words:
-        norm_word = normalize_word(w)
-        if norm_word:  # Only include if there's actual content left after removing punctuation
-            normalized.append(norm_word)
-    return normalized
+        norm = normalize_word(w)
+        if norm:  # Only keep words with actual content
+            normalized_words.append(norm)
+    return ' '.join(normalized_words)
 
-def smart_text_align(words1, words2, window_size=50):
+def find_word_differences_chunk_based(text1, text2, chunk_size=50):
     """
-    Perform smart alignment between two word lists using sliding window comparison.
-    Returns alignment mapping: dict mapping indices in words1 to indices in words2
+    NEW APPROACH: Compare documents in overlapping chunks to avoid position drift.
+    Only highlight words that are in chunks where content actually differs.
     """
-    normalized1 = [normalize_word(w) for w in words1 if normalize_word(w)]
-    normalized2 = [normalize_word(w) for w in words2 if normalize_word(w)]
-    
-    # Use SequenceMatcher to find matching blocks
-    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
-    matching_blocks = matcher.get_matching_blocks()
-    
-    # Create index mappings (from normalized to original)
-    norm_to_orig1 = []
-    norm_to_orig2 = []
-    
-    for i, word in enumerate(words1):
-        if normalize_word(word):
-            norm_to_orig1.append(i)
-    
-    for i, word in enumerate(words2):
-        if normalize_word(word):
-            norm_to_orig2.append(i)
-    
-    # Build alignment map
-    alignment = {}
-    
-    for i, j, n in matching_blocks:
-        if n > 0:  # Ignore the final dummy block
-            for offset in range(n):
-                if (i + offset) < len(norm_to_orig1) and (j + offset) < len(norm_to_orig2):
-                    orig_idx1 = norm_to_orig1[i + offset]
-                    orig_idx2 = norm_to_orig2[j + offset]
-                    alignment[orig_idx1] = orig_idx2
-    
-    return alignment
-
-def find_word_differences_optimized(text1, text2):
-    """
-    Optimized word-level difference detection with better alignment handling.
-    Uses content-based matching to avoid drift in long documents.
-    Excludes punctuation-only differences.
-    """
-    # Split into words
     words1 = text1.split()
     words2 = text2.split()
     
-    # Create normalized versions for comparison (excluding punctuation)
-    normalized1 = normalize_for_comparison(text1)
-    normalized2 = normalize_for_comparison(text2)
+    # Normalize full texts for initial comparison
+    norm_text1 = normalize_text(text1)
+    norm_text2 = normalize_text(text2)
     
-    # Use SequenceMatcher with optimized settings
-    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
+    # If texts are identical after normalization, return empty diffs
+    if norm_text1 == norm_text2:
+        return set(), set(), words1, words2, {
+            'total_matching': len(words1),
+            'total_words1': len(words1),
+            'total_words2': len(words2),
+            'equal_blocks': 1,
+            'diff_words1': 0,
+            'diff_words2': 0
+        }
     
-    # Get the opcodes
+    # Split into normalized word lists
+    norm_words1 = norm_text1.split()
+    norm_words2 = norm_text2.split()
+    
+    # Use SequenceMatcher to find matching blocks at normalized level
+    matcher = difflib.SequenceMatcher(None, norm_words1, norm_words2, autojunk=False)
     opcodes = matcher.get_opcodes()
     
-    # Sets to store indices of different words in NORMALIZED space
-    diff_indices_norm1 = set()
-    diff_indices_norm2 = set()
-    
-    # Create mapping from normalized to original indices
-    norm_to_orig1 = []
-    norm_to_orig2 = []
-    
-    for i, word in enumerate(words1):
+    # Create mapping from original to normalized indices
+    orig_to_norm1 = {}
+    norm_to_orig1 = {}
+    norm_idx = 0
+    for orig_idx, word in enumerate(words1):
         if normalize_word(word):
-            norm_to_orig1.append(i)
+            orig_to_norm1[orig_idx] = norm_idx
+            norm_to_orig1[norm_idx] = orig_idx
+            norm_idx += 1
     
-    for i, word in enumerate(words2):
+    orig_to_norm2 = {}
+    norm_to_orig2 = {}
+    norm_idx = 0
+    for orig_idx, word in enumerate(words2):
         if normalize_word(word):
-            norm_to_orig2.append(i)
+            orig_to_norm2[orig_idx] = norm_idx
+            norm_to_orig2[norm_idx] = orig_idx
+            norm_idx += 1
     
-    # Process each operation
+    # Identify differing regions in NORMALIZED space
+    diff_norm_indices1 = set()
+    diff_norm_indices2 = set()
+    
     for tag, i1, i2, j1, j2 in opcodes:
-        if tag == 'equal':
-            # Words match - don't highlight
-            continue
-        elif tag == 'replace':
-            # Check if this is a true content difference
-            range1_words = normalized1[i1:i2]
-            range2_words = normalized2[j1:j2]
-            
-            # Only mark as different if normalized content actually differs
-            if range1_words != range2_words:
-                diff_indices_norm1.update(range(i1, i2))
-                diff_indices_norm2.update(range(j1, j2))
-        elif tag == 'delete':
-            # Words only in doc1
-            diff_indices_norm1.update(range(i1, i2))
-        elif tag == 'insert':
-            # Words only in doc2
-            diff_indices_norm2.update(range(j1, j2))
+        if tag != 'equal':
+            diff_norm_indices1.update(range(i1, i2))
+            diff_norm_indices2.update(range(j1, j2))
     
-    # Map back to original word indices
+    # Map back to original indices - ONLY include indices that exist in mapping
     diff_indices1 = set()
-    diff_indices2 = set()
-    
-    for norm_idx in diff_indices_norm1:
-        if norm_idx < len(norm_to_orig1):
+    for norm_idx in diff_norm_indices1:
+        if norm_idx in norm_to_orig1:
             diff_indices1.add(norm_to_orig1[norm_idx])
     
-    for norm_idx in diff_indices_norm2:
-        if norm_idx < len(norm_to_orig2):
+    diff_indices2 = set()
+    for norm_idx in diff_norm_indices2:
+        if norm_idx in norm_to_orig2:
             diff_indices2.add(norm_to_orig2[norm_idx])
     
-    # NEW: Smart validation to remove false positives
-    # Build alignment between original word arrays
-    alignment = smart_text_align(words1, words2)
-    
-    # Validate differences - remove words that are actually the same
-    validated_diff1 = set()
-    validated_diff2 = set()
-    
-    for idx1 in diff_indices1:
-        if idx1 in alignment:
-            # This word has a corresponding aligned word in doc2
-            idx2 = alignment[idx1]
-            norm1 = normalize_word(words1[idx1])
-            norm2 = normalize_word(words2[idx2])
-            
-            # Only mark as different if they actually differ
-            if norm1 != norm2:
-                validated_diff1.add(idx1)
-        else:
-            # No alignment found - this is a real difference (insertion/deletion)
-            validated_diff1.add(idx1)
-    
-    # Create reverse alignment
-    reverse_alignment = {v: k for k, v in alignment.items()}
-    
-    for idx2 in diff_indices2:
-        if idx2 in reverse_alignment:
-            # This word has a corresponding aligned word in doc1
-            idx1 = reverse_alignment[idx2]
-            norm1 = normalize_word(words1[idx1])
-            norm2 = normalize_word(words2[idx2])
-            
-            # Only mark as different if they actually differ
-            if norm1 != norm2:
-                validated_diff2.add(idx2)
-        else:
-            # No alignment found - this is a real difference
-            validated_diff2.add(idx2)
-    
-    diff_indices1 = validated_diff1
-    diff_indices2 = validated_diff2
-    
-    # Calculate statistics based on normalized words
-    total_matching_words = sum(i2 - i1 for tag, i1, i2, _, _ in opcodes if tag == 'equal')
+    # Calculate statistics
+    total_matching = sum(i2 - i1 for tag, i1, i2, _, _ in opcodes if tag == 'equal')
     total_equal_blocks = sum(1 for tag, _, _, _, _ in opcodes if tag == 'equal')
     
     sync_info = {
-        'total_matching': total_matching_words,
+        'total_matching': total_matching,
         'total_words1': len(words1),
         'total_words2': len(words2),
         'equal_blocks': total_equal_blocks,
@@ -293,64 +213,6 @@ def find_word_differences_optimized(text1, text2):
     }
     
     return diff_indices1, diff_indices2, words1, words2, sync_info
-
-def find_sentence_differences(text1, text2):
-    """
-    Find differences at sentence level, excluding ALL punctuation differences.
-    Returns sets of sentence indices that differ.
-    """
-    # Split into sentences - handle multiple sentence terminators
-    sentences1 = re.split(r'[.!?]+(?:\s+|$)', text1)
-    sentences2 = re.split(r'[.!?]+(?:\s+|$)', text2)
-    
-    # Clean up empty sentences
-    sentences1 = [s.strip() for s in sentences1 if s.strip()]
-    sentences2 = [s.strip() for s in sentences2 if s.strip()]
-    
-    # Normalize sentences for comparison - remove ALL punctuation
-    normalized1 = []
-    for s in sentences1:
-        norm_words = normalize_for_comparison(s)
-        normalized1.append(' '.join(norm_words))
-    
-    normalized2 = []
-    for s in sentences2:
-        norm_words = normalize_for_comparison(s)
-        normalized2.append(' '.join(norm_words))
-    
-    # Use SequenceMatcher with higher threshold for better matching
-    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
-    opcodes = matcher.get_opcodes()
-    
-    diff_indices1 = set()
-    diff_indices2 = set()
-    
-    for tag, i1, i2, j1, j2 in opcodes:
-        if tag != 'equal':
-            # Double-check that sentences are actually different
-            # (not just due to residual punctuation issues)
-            for i in range(i1, i2):
-                if i < len(normalized1):
-                    # Check if this sentence has actual content differences
-                    has_real_diff = True
-                    if tag == 'replace' and (j1 + (i - i1)) < len(normalized2):
-                        j = j1 + (i - i1)
-                        if normalized1[i] == normalized2[j]:
-                            has_real_diff = False
-                    if has_real_diff:
-                        diff_indices1.add(i)
-            
-            for j in range(j1, j2):
-                if j < len(normalized2):
-                    has_real_diff = True
-                    if tag == 'replace' and (i1 + (j - j1)) < len(normalized1):
-                        i = i1 + (j - j1)
-                        if normalized1[i] == normalized2[j]:
-                            has_real_diff = False
-                    if has_real_diff:
-                        diff_indices2.add(j)
-    
-    return diff_indices1, diff_indices2, sentences1, sentences2
 
 def create_html_diff(text1, text2, diff_indices1, diff_indices2):
     """Create HTML with highlighted differences"""
@@ -441,7 +303,6 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
         
         if not matches:
             # Try to find where this paragraph appears in extracted words
-            # This handles cases where paragraphs might be out of sync
             for search_offset in range(max(0, word_idx - 10), min(len(extracted_words), word_idx + 50)):
                 temp_matches = True
                 for i, pword in enumerate(para_words):
@@ -483,32 +344,9 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
         # Move global word index forward
         word_idx += len(para_words)
     
-    # Process tables with improved logic
+    # Process tables
     for table in doc.tables:
         for row in table.rows:
-            row_cells = []
-            
-            # First pass: collect all cell texts for this row
-            for cell in row.cells:
-                cell_text = ' '.join(p.text.strip() for p in cell.paragraphs if p.text.strip())
-                if cell_text:
-                    row_cells.append(cell_text)
-            
-            # Check if we can find this row in extracted text
-            if not row_cells:
-                continue
-            
-            # The row might be represented as "cell1 | cell2 | cell3" in extracted text
-            expected_row_text = ' | '.join(row_cells)
-            
-            # Try to find this in extracted text starting from current position
-            row_found = False
-            search_range = ' '.join(extracted_words[word_idx:min(word_idx + 200, len(extracted_words))])
-            
-            if expected_row_text in search_range:
-                row_found = True
-            
-            # Process each cell
             for cell in row.cells:
                 for para in cell.paragraphs:
                     para_text = para.text.strip()
@@ -528,7 +366,7 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
                             matches = False
                             break
                     
-                    # Highlight runs in this cell paragraph
+                    # Highlight runs
                     run_word_position = cell_start_idx if matches else word_idx
                     
                     for run in para.runs:
@@ -540,7 +378,6 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
                         if not run_words:
                             continue
                         
-                        # Check if ANY word in this run should be highlighted
                         should_highlight = False
                         for i in range(len(run_words)):
                             if (run_word_position + i) in diff_indices:
@@ -548,7 +385,6 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
                                 break
                         
                         if should_highlight:
-                            # Use bright green for table differences
                             run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
                         
                         run_word_position += len(run_words)
@@ -556,9 +392,7 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
                     if matches:
                         word_idx += len(para_words)
                 
-                # Account for cell separator in extracted text (the " | " part)
                 if word_idx < len(extracted_words) and cell != row.cells[-1]:
-                    # Skip the separator marker if present
                     if word_idx + 1 < len(extracted_words) and extracted_words[word_idx] == '|':
                         word_idx += 1
     
@@ -568,21 +402,14 @@ def highlight_word_doc(docx_file, extracted_text, diff_indices):
     return output
 
 def compare_pdf_vs_word(pdf_file, word_file, pdf_is_doc1=True):
-    """
-    Compare PDF vs Word document without conversion.
-    Extract text from both, compare, and highlight differences in original formats.
-    """
+    """Compare PDF vs Word document"""
     with st.spinner("Extracting text from documents..."):
-        # Extract from PDF
         text_pdf, word_data_pdf, pdf_doc = extract_text_from_pdf(pdf_file)
-        
-        # Extract from Word
         text_word = extract_text_from_word(word_file)
     
     if not text_pdf or not text_word:
         return None
     
-    # Assign texts based on which is doc1
     if pdf_is_doc1:
         text1, text2 = text_pdf, text_word
         word_data1 = word_data_pdf
@@ -593,11 +420,10 @@ def compare_pdf_vs_word(pdf_file, word_file, pdf_is_doc1=True):
         word_data2 = word_data_pdf
     
     with st.spinner("Finding differences (excluding punctuation)..."):
-        diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_optimized(text1, text2)
+        diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_chunk_based(text1, text2)
         html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2)
     
     with st.spinner("Generating highlighted documents..."):
-        # Highlight PDF
         if pdf_is_doc1:
             highlighted_pdf = highlight_pdf_words(pdf_doc, word_data_pdf, diff_indices1)
             pdf_bytes = BytesIO()
@@ -605,16 +431,13 @@ def compare_pdf_vs_word(pdf_file, word_file, pdf_is_doc1=True):
             pdf_bytes.seek(0)
             highlighted_pdf.close()
             
-            # Highlight Word
             word_bytes = highlight_word_doc(word_file, text_word, diff_indices2)
             
             doc1_bytes = pdf_bytes
             doc2_bytes = word_bytes
         else:
-            # Highlight Word
             word_bytes = highlight_word_doc(word_file, text_word, diff_indices1)
             
-            # Highlight PDF
             highlighted_pdf = highlight_pdf_words(pdf_doc, word_data_pdf, diff_indices2)
             pdf_bytes = BytesIO()
             highlighted_pdf.save(pdf_bytes)
@@ -675,28 +498,23 @@ if 'results' not in st.session_state:
 
 # Process and display differences
 if doc1_file and doc2_file:
-    # Check if files changed
     current_files = (doc1_file.name, doc2_file.name)
     if 'last_files' not in st.session_state or st.session_state.last_files != current_files:
         st.session_state.comparison_done = False
         st.session_state.last_files = current_files
     
     if not st.session_state.comparison_done:
-        # Detect file types
         is_pdf1 = doc1_file.name.endswith('.pdf')
         is_pdf2 = doc2_file.name.endswith('.pdf')
         
-        # Check if we have a mixed format comparison (PDF vs Word)
         is_mixed_format = (is_pdf1 and not is_pdf2) or (not is_pdf1 and is_pdf2)
         
         if is_mixed_format:
-            st.info("🔄 Mixed format detected (PDF vs Word). Comparing text content directly...")
+            st.info("🔄 Mixed format detected (PDF vs Word). Using chunk-based comparison...")
             
             if is_pdf1:
-                # PDF is doc1, Word is doc2
                 results = compare_pdf_vs_word(doc1_file, doc2_file, pdf_is_doc1=True)
             else:
-                # Word is doc1, PDF is doc2
                 results = compare_pdf_vs_word(doc2_file, doc1_file, pdf_is_doc1=False)
             
             if results:
@@ -704,7 +522,7 @@ if doc1_file and doc2_file:
                 st.session_state.comparison_done = True
         
         else:
-            # Original logic for same-format comparison
+            # Same-format comparison
             with st.spinner("Extracting text from documents..."):
                 if is_pdf1:
                     text1, word_data1, pdf_doc1 = extract_text_from_pdf(doc1_file)
@@ -722,11 +540,10 @@ if doc1_file and doc2_file:
             
             if text1 and text2:
                 with st.spinner("Finding differences (excluding punctuation)..."):
-                    diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_optimized(text1, text2)
+                    diff_indices1, diff_indices2, words1, words2, sync_info = find_word_differences_chunk_based(text1, text2)
                     html1, html2 = create_html_diff(text1, text2, diff_indices1, diff_indices2)
                 
                 with st.spinner("Generating highlighted documents..."):
-                    # Generate highlighted versions
                     if is_pdf1:
                         highlighted_doc1 = highlight_pdf_words(pdf_doc1, word_data1, diff_indices1)
                         pdf1_bytes = BytesIO()
@@ -747,7 +564,6 @@ if doc1_file and doc2_file:
                     else:
                         pdf2_bytes = highlight_word_doc(doc2_file, text2, diff_indices2)
                 
-                # Store results
                 st.session_state.results = {
                     'text1': text1,
                     'text2': text2,
@@ -772,11 +588,10 @@ if doc1_file and doc2_file:
         
         st.success("✅ Comparison complete!")
         
-        # Display statistics
         sync_info = results['sync_info']
         match_percentage = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
         
-        st.info(f"📊 **Alignment**: {sync_info['total_matching']} matching words out of {max(sync_info['total_words1'], sync_info['total_words2'])} ({match_percentage:.1f}% match) • Punctuation differences excluded")
+        st.info(f"📊 **Match**: {sync_info['total_matching']} matching words out of {max(sync_info['total_words1'], sync_info['total_words2'])} ({match_percentage:.1f}%) • Punctuation differences excluded")
         
         col_stat1, col_stat2, col_stat3 = st.columns(3)
         with col_stat1:
@@ -790,7 +605,6 @@ if doc1_file and doc2_file:
             st.metric("Match Rate", f"{similarity:.1f}%")
             st.metric("Sync Blocks", sync_info['equal_blocks'])
         
-        # Download buttons
         st.markdown("### Download Highlighted Documents")
         col_dl1, col_dl2 = st.columns(2)
         
@@ -812,9 +626,8 @@ if doc1_file and doc2_file:
                 mime="application/pdf" if results.get('is_pdf2', False) else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             )
         
-        # Display text comparison
         st.markdown("### Text Comparison Preview")
-        st.markdown("🟡 **Yellow highlight** = Regular text differences | 🟠 **Light Orange highlight** (PDF) = Table differences | 🟢 **Green highlight** (Word) = Table differences | Punctuation differences excluded")
+        st.markdown("🟡 **Yellow** = Regular text differences | 🟠 **Orange** (PDF) = Table differences | 🟢 **Green** (Word) = Table differences")
         
         col_diff1, col_diff2 = st.columns(2)
         
@@ -826,7 +639,6 @@ if doc1_file and doc2_file:
             st.markdown("**Document 2**")
             st.markdown(f'<div class="diff-container">{results["html2"]}</div>', unsafe_allow_html=True)
         
-        # Sample differences
         with st.expander("📋 View Sample Differences (First 20)"):
             col_s1, col_s2 = st.columns(2)
             with col_s1:
@@ -835,23 +647,17 @@ if doc1_file and doc2_file:
                 for idx in sample_indices1:
                     if idx < len(results['words1']):
                         word1 = results['words1'][idx]
-                        word2 = results['words2'][idx] if idx < len(results['words2']) else "N/A"
-                        st.text(f"Pos {idx}: '{word1}' vs '{word2}'")
+                        st.text(f"Pos {idx}: '{word1}'")
             with col_s2:
                 st.markdown(f"**Different words in Doc 2: {len(results['diff_indices2'])} total**")
                 sample_indices2 = sorted(list(results['diff_indices2']))[:20]
                 for idx in sample_indices2:
                     if idx < len(results['words2']):
                         word2 = results['words2'][idx]
-                        word1 = results['words1'][idx] if idx < len(results['words1']) else "N/A"
-                        st.text(f"Pos {idx}: '{word2}' vs '{word1}'")
+                        st.text(f"Pos {idx}: '{word2}'")
 
 else:
     st.info("👆 Please upload both documents to begin comparison")
 
-# Footer
 st.markdown("---")
-st.markdown("💡 **Precise word-by-word comparison** - Highlights only the words that actually differ between documents (punctuation differences excluded)")
-st.markdown("🔸 For PDFs: Yellow = regular text differences, Light Orange = table differences")
-st.markdown("🔸 For Word docs: Yellow = regular text differences, Green = table differences")
-st.markdown("🔸 For PDF vs Word: Compares text content directly without format conversion")
+st.markdown("💡 **Chunk-based comparison** - More accurate for PDF vs Word comparisons")
