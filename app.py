@@ -109,8 +109,6 @@ def extract_text_from_pdf(pdf_file):
 
 def normalize_word(word):
     """Normalize word by removing ALL punctuation and converting to lowercase for comparison"""
-    # Remove ALL punctuation including brackets, quotes, dashes, periods, etc.
-    # This ensures words are compared purely on alphanumeric content
     import string
     # Create a translation table that removes all punctuation
     translator = str.maketrans('', '', string.punctuation)
@@ -132,6 +130,43 @@ def normalize_for_comparison(text):
         if norm_word:  # Only include if there's actual content left after removing punctuation
             normalized.append(norm_word)
     return normalized
+
+def smart_text_align(words1, words2, window_size=50):
+    """
+    Perform smart alignment between two word lists using sliding window comparison.
+    Returns alignment mapping: dict mapping indices in words1 to indices in words2
+    """
+    normalized1 = [normalize_word(w) for w in words1 if normalize_word(w)]
+    normalized2 = [normalize_word(w) for w in words2 if normalize_word(w)]
+    
+    # Use SequenceMatcher to find matching blocks
+    matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
+    matching_blocks = matcher.get_matching_blocks()
+    
+    # Create index mappings (from normalized to original)
+    norm_to_orig1 = []
+    norm_to_orig2 = []
+    
+    for i, word in enumerate(words1):
+        if normalize_word(word):
+            norm_to_orig1.append(i)
+    
+    for i, word in enumerate(words2):
+        if normalize_word(word):
+            norm_to_orig2.append(i)
+    
+    # Build alignment map
+    alignment = {}
+    
+    for i, j, n in matching_blocks:
+        if n > 0:  # Ignore the final dummy block
+            for offset in range(n):
+                if (i + offset) < len(norm_to_orig1) and (j + offset) < len(norm_to_orig2):
+                    orig_idx1 = norm_to_orig1[i + offset]
+                    orig_idx2 = norm_to_orig2[j + offset]
+                    alignment[orig_idx1] = orig_idx2
+    
+    return alignment
 
 def find_word_differences_optimized(text1, text2):
     """
@@ -202,83 +237,44 @@ def find_word_differences_optimized(text1, text2):
         if norm_idx < len(norm_to_orig2):
             diff_indices2.add(norm_to_orig2[norm_idx])
     
-    # CRITICAL: Remove false positives where both docs have same word at same position
-    # This happens when alignment drifts
+    # NEW: Smart validation to remove false positives
+    # Build alignment between original word arrays
+    alignment = smart_text_align(words1, words2)
+    
+    # Validate differences - remove words that are actually the same
     validated_diff1 = set()
     validated_diff2 = set()
     
-    # Create a reverse mapping to find normalized positions from original positions
-    orig_to_norm1 = {}
-    for norm_idx, orig_idx in enumerate(norm_to_orig1):
-        orig_to_norm1[orig_idx] = norm_idx
-    
-    orig_to_norm2 = {}
-    for norm_idx, orig_idx in enumerate(norm_to_orig2):
-        orig_to_norm2[orig_idx] = norm_idx
-    
-    # Validate diff_indices1
-    for orig_idx in diff_indices1:
-        if orig_idx < len(words1):
-            word1_norm = normalize_word(words1[orig_idx])
+    for idx1 in diff_indices1:
+        if idx1 in alignment:
+            # This word has a corresponding aligned word in doc2
+            idx2 = alignment[idx1]
+            norm1 = normalize_word(words1[idx1])
+            norm2 = normalize_word(words2[idx2])
             
-            # Find corresponding position in doc2
-            if orig_idx in orig_to_norm1:
-                norm_idx1 = orig_to_norm1[orig_idx]
-                
-                # Check if this normalized index has a corresponding position in doc2
-                # by looking at the opcodes to find the mapping
-                is_truly_different = True
-                
-                for tag, i1, i2, j1, j2 in opcodes:
-                    if tag == 'equal' and i1 <= norm_idx1 < i2:
-                        # This word is in an equal block, find its pair
-                        offset = norm_idx1 - i1
-                        norm_idx2 = j1 + offset
-                        
-                        if norm_idx2 < len(norm_to_orig2):
-                            orig_idx2 = norm_to_orig2[norm_idx2]
-                            if orig_idx2 < len(words2):
-                                word2_norm = normalize_word(words2[orig_idx2])
-                                # If words are actually the same, don't highlight
-                                if word1_norm == word2_norm:
-                                    is_truly_different = False
-                                    break
-                
-                if is_truly_different:
-                    validated_diff1.add(orig_idx)
-            else:
-                validated_diff1.add(orig_idx)
+            # Only mark as different if they actually differ
+            if norm1 != norm2:
+                validated_diff1.add(idx1)
+        else:
+            # No alignment found - this is a real difference (insertion/deletion)
+            validated_diff1.add(idx1)
     
-    # Validate diff_indices2
-    for orig_idx in diff_indices2:
-        if orig_idx < len(words2):
-            word2_norm = normalize_word(words2[orig_idx])
+    # Create reverse alignment
+    reverse_alignment = {v: k for k, v in alignment.items()}
+    
+    for idx2 in diff_indices2:
+        if idx2 in reverse_alignment:
+            # This word has a corresponding aligned word in doc1
+            idx1 = reverse_alignment[idx2]
+            norm1 = normalize_word(words1[idx1])
+            norm2 = normalize_word(words2[idx2])
             
-            # Find corresponding position in doc1
-            if orig_idx in orig_to_norm2:
-                norm_idx2 = orig_to_norm2[orig_idx]
-                
-                is_truly_different = True
-                
-                for tag, i1, i2, j1, j2 in opcodes:
-                    if tag == 'equal' and j1 <= norm_idx2 < j2:
-                        # This word is in an equal block, find its pair
-                        offset = norm_idx2 - j1
-                        norm_idx1 = i1 + offset
-                        
-                        if norm_idx1 < len(norm_to_orig1):
-                            orig_idx1 = norm_to_orig1[norm_idx1]
-                            if orig_idx1 < len(words1):
-                                word1_norm = normalize_word(words1[orig_idx1])
-                                # If words are actually the same, don't highlight
-                                if word1_norm == word2_norm:
-                                    is_truly_different = False
-                                    break
-                
-                if is_truly_different:
-                    validated_diff2.add(orig_idx)
-            else:
-                validated_diff2.add(orig_idx)
+            # Only mark as different if they actually differ
+            if norm1 != norm2:
+                validated_diff2.add(idx2)
+        else:
+            # No alignment found - this is a real difference
+            validated_diff2.add(idx2)
     
     diff_indices1 = validated_diff1
     diff_indices2 = validated_diff2
