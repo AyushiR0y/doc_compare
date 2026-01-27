@@ -144,13 +144,34 @@ def find_word_differences_optimized(text1, text2):
     Uses content-based matching to avoid drift in long documents.
     Excludes punctuation-only differences.
     """
+    # Create translation table for punctuation removal
+    punctuation_table = str.maketrans('', '', r'""''""""''--..,,::;;!!??()[]{}')
+    
     # Split into words
     words1 = text1.split()
     words2 = text2.split()
     
     # Create normalized versions for comparison (excluding punctuation)
-    normalized1 = normalize_for_comparison(text1)
-    normalized2 = normalize_for_comparison(text2)
+    normalized1 = []
+    normalized2 = []
+    
+    # Create mapping from normalized to original indices
+    norm_to_orig1 = []
+    norm_to_orig2 = []
+    
+    for i, word in enumerate(words1):
+        # Remove punctuation for comparison
+        clean_word = word.translate(punctuation_table).lower()
+        if clean_word:  # Only include if there's actual content left after removing punctuation
+            normalized1.append(clean_word)
+            norm_to_orig1.append(i)
+    
+    for i, word in enumerate(words2):
+        # Remove punctuation for comparison
+        clean_word = word.translate(punctuation_table).lower()
+        if clean_word:  # Only include if there's actual content left after removing punctuation
+            normalized2.append(clean_word)
+            norm_to_orig2.append(i)
     
     # Use SequenceMatcher with optimized settings
     matcher = difflib.SequenceMatcher(None, normalized1, normalized2, autojunk=False)
@@ -161,18 +182,6 @@ def find_word_differences_optimized(text1, text2):
     # Sets to store indices of different words in NORMALIZED space
     diff_indices_norm1 = set()
     diff_indices_norm2 = set()
-    
-    # Create mapping from normalized to original indices
-    norm_to_orig1 = []
-    norm_to_orig2 = []
-    
-    for i, word in enumerate(words1):
-        if normalize_word(word):
-            norm_to_orig1.append(i)
-    
-    for i, word in enumerate(words2):
-        if normalize_word(word):
-            norm_to_orig2.append(i)
     
     # Process each operation
     for tag, i1, i2, j1, j2 in opcodes:
@@ -224,7 +233,7 @@ def find_word_differences_optimized(text1, text2):
     # Validate diff_indices1 - be more conservative about what we mark as different
     for orig_idx in diff_indices1:
         if orig_idx < len(words1):
-            word1_norm = normalize_word(words1[orig_idx])
+            word1_norm = words1[orig_idx].translate(punctuation_table).lower()
             
             # Find corresponding position in doc2
             if orig_idx in orig_to_norm1:
@@ -240,7 +249,7 @@ def find_word_differences_optimized(text1, text2):
     # Validate diff_indices2 - be more conservative about what we mark as different
     for orig_idx in diff_indices2:
         if orig_idx < len(words2):
-            word2_norm = normalize_word(words2[orig_idx])
+            word2_norm = words2[orig_idx].translate(punctuation_table).lower()
             
             # Find corresponding position in doc1
             if orig_idx in orig_to_norm2:
