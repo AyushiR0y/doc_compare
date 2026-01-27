@@ -994,24 +994,11 @@ if doc1_file and doc2_file:
         with col_stat1:
             st.metric("Words in Doc 1", sync_info['total_words1'])
             st.metric("Different in Doc 1", sync_info['diff_words1'])
-        with col_stat2:
-            st.metric("Words in Doc 2", sync_info['total_words2'])
-            st.metric("Different in Doc 2", sync_info['diff_words2'])
-        with col_stat3:
-            similarity = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
-            st.metric("Match Rate", f"{similarity:.1f}%")
-            st.metric("Sync Blocks", sync_info.get('equal_blocks', 0))
-        with col_stat4:
             st.metric("Diff Ratio Doc 1", f"{diff_ratio1:.1%}")
-            st.metric("Diff Ratio Doc 2", f"{diff_ratio2:.1%}")
-        
-        col_stat1, col_stat2, col_stat3 = st.columns(3)
-        with col_stat1:
-            st.metric("Words in Doc 1", sync_info['total_words1'])
-            st.metric("Different in Doc 1", sync_info['diff_words1'])
         with col_stat2:
             st.metric("Words in Doc 2", sync_info['total_words2'])
             st.metric("Different in Doc 2", sync_info['diff_words2'])
+            st.metric("Diff Ratio Doc 2", f"{diff_ratio2:.1%}")
         with col_stat3:
             similarity = (sync_info['total_matching'] / max(sync_info['total_words1'], sync_info['total_words2'])) * 100
             st.metric("Match Rate", f"{similarity:.1f}%")
