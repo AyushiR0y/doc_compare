@@ -117,8 +117,9 @@ def clean_text_for_comparison(text):
     """
     import string
     
-    # First, handle line breaks that split words (e.g., "whom/\ninstitution" -> "whom/institution")
-    # Replace newlines with spaces, but we'll handle this during word processing
+    # CRITICAL FIX: Replace slashes and dashes with spaces BEFORE processing
+    # This prevents "whom/institution" from becoming "whominstitution"
+    text = text.replace('/', ' ').replace('-', ' ').replace('–', ' ').replace('—', ' ')
     
     # Split into words
     words = text.split()
@@ -136,7 +137,6 @@ def clean_text_for_comparison(text):
         
         # Handle unicode characters
         cleaned = cleaned.replace('"', '').replace('"', '').replace(''', '').replace(''', '')
-        cleaned = cleaned.replace('–', '').replace('—', '')
         
         # Remove any remaining whitespace
         cleaned = cleaned.strip()
@@ -194,10 +194,12 @@ def find_word_differences_robust(text1, text2):
         
         # Check if this word becomes empty after cleaning
         import string
+        # Apply same cleaning as clean_text_for_comparison
+        temp_word = word.replace('/', ' ').replace('-', ' ').replace('–', ' ').replace('—', ' ')
         translator = str.maketrans('', '', string.punctuation)
-        cleaned = word.translate(translator).lower()
+        cleaned = temp_word.translate(translator).lower()
         cleaned = cleaned.replace('"', '').replace('"', '').replace(''', '').replace(''', '')
-        cleaned = cleaned.replace('–', '').replace('—', '').strip()
+        cleaned = cleaned.strip()
         
         if cleaned:
             cleaned_to_orig1.append(orig_idx)
@@ -211,10 +213,12 @@ def find_word_differences_robust(text1, text2):
             continue
         
         import string
+        # Apply same cleaning as clean_text_for_comparison
+        temp_word = word.replace('/', ' ').replace('-', ' ').replace('–', ' ').replace('—', ' ')
         translator = str.maketrans('', '', string.punctuation)
-        cleaned = word.translate(translator).lower()
+        cleaned = temp_word.translate(translator).lower()
         cleaned = cleaned.replace('"', '').replace('"', '').replace(''', '').replace(''', '')
-        cleaned = cleaned.replace('–', '').replace('—', '').strip()
+        cleaned = cleaned.strip()
         
         if cleaned:
             cleaned_to_orig2.append(orig_idx)
