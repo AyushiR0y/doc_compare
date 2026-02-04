@@ -1,4 +1,3 @@
-
 import streamlit as st
 import difflib
 from io import BytesIO
@@ -8,6 +7,7 @@ import re
 import os
 import tempfile
 import base64
+from PIL import Image
 
 # UPDATED: Sidebar collapsed, layout wide
 st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="collapsed")
@@ -262,7 +262,7 @@ def run_diff(text1, text2):
     return diff_indices1, diff_indices2, info
 
 # ============================================================================
-# PREVIEW GENERATION
+# PREVIEW GENERATION - NEW: PDF to Images with Highlights
 # ============================================================================
 
 def create_html_preview(word_objects, diff_indices):
@@ -315,6 +315,51 @@ def create_html_preview(word_objects, diff_indices):
         obj_idx += 1
         
     return "".join(html_parts)
+
+def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=None):
+    """
+    Renders PDF pages as PNG images with highlight rectangles drawn on them.
+    Returns list of PIL Image objects.
+    """
+    page_images = []
+    num_pages = len(doc) if max_pages is None else min(max_pages, len(doc))
+    
+    for page_num in range(num_pages):
+        page = doc[page_num]
+        
+        # Render page to pixmap (image) at 2x resolution for better quality
+        mat = fitz.Matrix(2, 2)
+        pix = page.get_pixmap(matrix=mat)
+        
+        # Convert to PIL Image
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        # Draw highlights on the image
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(img, 'RGBA')
+        
+        for word_idx in diff_indices:
+            if word_idx < len(word_data):
+                word_info = word_data[word_idx]
+                if word_info['page'] == page_num:
+                    bbox = word_info['bbox']
+                    # Scale coordinates by 2x (same as matrix)
+                    x0, y0, x1, y1 = bbox[0]*2, bbox[1]*2, bbox[2]*2, bbox[3]*2
+                    
+                    # Draw semi-transparent yellow rectangle
+                    if word_info.get('in_table', False):
+                        fill_color = (255, 237, 224, 100)  # Light orange for tables
+                    else:
+                        fill_color = (255, 255, 0, 100)  # Yellow
+                    
+                    draw.rectangle([x0, y0, x1, y1], fill=fill_color, outline=(255, 200, 0, 200), width=2)
+        
+        page_images.append({
+            'page_num': page_num + 1,
+            'image': img  # Store PIL Image directly
+        })
+    
+    return page_images
 
 # ============================================================================
 # HIGHLIGHTING FOR DOWNLOAD
@@ -441,7 +486,7 @@ def run_comparison(d1, d2):
     diffs1, diffs2, info = run_diff(text1, text2)
     
     # 3. Generate Previews & Downloads
-    progress_bar.progress(80, text="Generating highlighted documents...")
+    progress_bar.progress(70, text="Generating highlighted documents...")
     
     # -- Doc 1 --
     if is_pdf1:
@@ -450,15 +495,14 @@ def run_comparison(d1, d2):
         hl_doc1.save(pdf1_bytes)
         pdf1_bytes.seek(0)
         hl_doc1.close()
+        
+        # Generate image preview
+        progress_bar.progress(75, text="Rendering PDF preview for Doc 1...")
+        preview1_images = render_pdf_pages_with_highlights(pdf_doc1, high_data1, diffs1)
         pdf_doc1.close()
         
-        # CLOUD FIX: Check file size. If > 2MB, switch to HTML preview to avoid crash.
-        if len(pdf1_bytes.getvalue()) > 2 * 1024 * 1024: 
-            preview1_type = 'html'
-            preview1_data = create_html_preview(w_objs1, diffs1)
-        else:
-            preview1_type = 'pdf'
-            preview1_data = pdf1_bytes.getvalue()
+        preview1_type = 'pdf_images'
+        preview1_data = preview1_images
             
     else:
         pdf1_bytes = highlight_word_doc(docx_doc1, w_objs1, diffs1)
@@ -466,21 +510,20 @@ def run_comparison(d1, d2):
         preview1_data = create_html_preview(w_objs1, diffs1)
         
     # -- Doc 2 --
+    progress_bar.progress(85, text="Rendering preview for Doc 2...")
     if is_pdf2:
         hl_doc2 = highlight_pdf_words(pdf_doc2, high_data2, diffs2)
         pdf2_bytes = BytesIO()
         hl_doc2.save(pdf2_bytes)
         pdf2_bytes.seek(0)
         hl_doc2.close()
+        
+        # Generate image preview
+        preview2_images = render_pdf_pages_with_highlights(pdf_doc2, high_data2, diffs2)
         pdf_doc2.close()
         
-        # CLOUD FIX: Check file size
-        if len(pdf2_bytes.getvalue()) > 2 * 1024 * 1024: 
-            preview2_type = 'html'
-            preview2_data = create_html_preview(w_objs2, diffs2)
-        else:
-            preview2_type = 'pdf'
-            preview2_data = pdf2_bytes.getvalue()
+        preview2_type = 'pdf_images'
+        preview2_data = preview2_images
             
     else:
         pdf2_bytes = highlight_word_doc(docx_doc2, w_objs2, diffs2)
@@ -499,10 +542,23 @@ def run_comparison(d1, d2):
         'info': info
     }
 
-# CSS
+# CSS - Updated with better styling
 st.markdown("""
 <style>
-    /* Container for preview */
+    /* Global tweaks */
+    .main .block-container {
+        padding-top: 2rem;
+        max-width: 100%;
+    }
+    
+    /* Stats metrics */
+    div[data-testid="metric-container"] {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    
+    /* Preview containers */
     .preview-wrapper {
         width: 100%;
         height: 85vh;
@@ -526,26 +582,13 @@ st.markdown("""
         justify-content: space-between;
         align-items: center;
     }
-    
-    .preview-badge {
-        font-size: 12px;
-        background: #e9ecef;
-        padding: 2px 8px;
-        border-radius: 4px;
-        color: #666;
-    }
 
     .preview-content {
         flex: 1;
         position: relative;
-        overflow: hidden;
-    }
-
-    .pdf-frame {
-        width: 100%;
-        height: 100%;
-        border: none;
-        display: block;
+        overflow-y: auto;
+        overflow-x: hidden;
+        background: #f5f5f5;
     }
 
     .diff-container {
@@ -569,6 +612,12 @@ st.markdown("""
         background-color: #ffff00;
         padding: 2px 0;
         font-weight: bold;
+    }
+    
+    /* Image styling for PDF pages */
+    img {
+        border-radius: 4px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -635,24 +684,29 @@ if doc1_file and doc2_file:
         
         def show_preview(col, title, p_type, p_data, ext):
             with col:
-                # If PDF type is 'html', add a badge saying "Text Mode" (due to size)
-                badge = '<span class="preview-badge">Text Preview (Large File)</span>' if p_type == 'html' and ext == 'pdf' else ''
-                
-                if p_type == 'pdf':
-                    b64 = base64.b64encode(p_data).decode('utf-8')
-                    html_block = f"""
-                    <div class="preview-wrapper">
-                        <div class="preview-header">{title} <span style="font-weight:normal; font-size:12px; color:#666">Visual PDF View</span></div>
-                        <div class="preview-content">
-                            <iframe src="data:application/pdf;base64,{b64}" class="pdf-frame"></iframe>
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_block, unsafe_allow_html=True)
+                if p_type == 'pdf_images':
+                    # Show PDF as rendered images using Streamlit's native image display
+                    st.markdown(f"#### {title}")
+                    st.caption(f"📄 {len(p_data)} pages with differences highlighted")
+                    
+                    # Create a scrollable container
+                    with st.container(height=700):
+                        for page_info in p_data:
+                            st.image(
+                                page_info['image'],  # Direct PIL Image object
+                                caption=f"Page {page_info['page_num']}",
+                                use_container_width=True
+                            )
+                            
+                            # Only add separator if not the last page
+                            if page_info['page_num'] < len(p_data):
+                                st.divider()
+                    
                 else:
+                    # HTML preview for Word docs
+                    st.markdown(f"#### {title}")
                     html_block = f"""
                     <div class="preview-wrapper">
-                        <div class="preview-header">{title} {badge}</div>
                         <div class="preview-content">
                             <div class="diff-container">{p_data}</div>
                         </div>
