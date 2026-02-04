@@ -1,3 +1,4 @@
+
 import streamlit as st
 import difflib
 from io import BytesIO
@@ -8,7 +9,7 @@ import os
 import tempfile
 import base64
 
-# Sidebar collapsed, layout wide
+# UPDATED: Sidebar collapsed, layout wide
 st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="collapsed")
 
 st.title("📄 Document Diff Checker")
@@ -407,10 +408,14 @@ def highlight_word_doc(doc, word_objects, diff_indices):
 # ============================================================================
 
 def run_comparison(d1, d2):
+    progress_bar = st.progress(0, text="Initializing...")
+    
     is_pdf1 = d1.name.endswith('.pdf')
     is_pdf2 = d2.name.endswith('.pdf')
     
     # 1. Extract
+    progress_bar.progress(10, text="Extracting text from documents...")
+    
     if is_pdf1:
         text1, w_objs1, high_data1, pdf_doc1 = extract_words_from_pdf(d1)
         docx_doc1 = None
@@ -427,12 +432,16 @@ def run_comparison(d1, d2):
         high_data2 = None
         pdf_doc2 = None
         
-    if not text1 or not text2: return None
+    if not text1 or not text2: 
+        progress_bar.empty()
+        return None
     
     # 2. Diff
+    progress_bar.progress(50, text="Analyzing differences...")
     diffs1, diffs2, info = run_diff(text1, text2)
     
     # 3. Generate Previews & Downloads
+    progress_bar.progress(80, text="Generating highlighted documents...")
     
     # -- Doc 1 --
     if is_pdf1:
@@ -442,8 +451,15 @@ def run_comparison(d1, d2):
         pdf1_bytes.seek(0)
         hl_doc1.close()
         pdf_doc1.close()
-        preview1_type = 'pdf'
-        preview1_data = pdf1_bytes.getvalue()
+        
+        # CLOUD FIX: Check file size. If > 2MB, switch to HTML preview to avoid crash.
+        if len(pdf1_bytes.getvalue()) > 2 * 1024 * 1024: 
+            preview1_type = 'html'
+            preview1_data = create_html_preview(w_objs1, diffs1)
+        else:
+            preview1_type = 'pdf'
+            preview1_data = pdf1_bytes.getvalue()
+            
     else:
         pdf1_bytes = highlight_word_doc(docx_doc1, w_objs1, diffs1)
         preview1_type = 'html'
@@ -457,12 +473,25 @@ def run_comparison(d1, d2):
         pdf2_bytes.seek(0)
         hl_doc2.close()
         pdf_doc2.close()
-        preview2_type = 'pdf'
-        preview2_data = pdf2_bytes.getvalue()
+        
+        # CLOUD FIX: Check file size
+        if len(pdf2_bytes.getvalue()) > 2 * 1024 * 1024: 
+            preview2_type = 'html'
+            preview2_data = create_html_preview(w_objs2, diffs2)
+        else:
+            preview2_type = 'pdf'
+            preview2_data = pdf2_bytes.getvalue()
+            
     else:
         pdf2_bytes = highlight_word_doc(docx_doc2, w_objs2, diffs2)
         preview2_type = 'html'
         preview2_data = create_html_preview(w_objs2, diffs2)
+    
+    progress_bar.progress(100, text="Complete!")
+    # Sleep briefly to show 100%
+    import time
+    time.sleep(0.5)
+    progress_bar.empty()
     
     return {
         'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': 'pdf' if is_pdf1 else 'docx',
@@ -473,10 +502,10 @@ def run_comparison(d1, d2):
 # CSS
 st.markdown("""
 <style>
-    /* Container for the entire preview pane */
+    /* Container for preview */
     .preview-wrapper {
         width: 100%;
-        height: 85vh; /* Fixed height for the pane */
+        height: 85vh;
         display: flex;
         flex-direction: column;
         border: 1px solid #ddd;
@@ -486,7 +515,6 @@ st.markdown("""
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
     }
 
-    /* Header inside the pane */
     .preview-header {
         background-color: #f8f9fa;
         padding: 10px 15px;
@@ -494,16 +522,25 @@ st.markdown("""
         font-weight: bold;
         font-size: 16px;
         color: #333;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .preview-badge {
+        font-size: 12px;
+        background: #e9ecef;
+        padding: 2px 8px;
+        border-radius: 4px;
+        color: #666;
     }
 
-    /* Content area */
     .preview-content {
         flex: 1;
         position: relative;
         overflow: hidden;
     }
 
-    /* PDF Iframe styling */
     .pdf-frame {
         width: 100%;
         height: 100%;
@@ -511,7 +548,6 @@ st.markdown("""
         display: block;
     }
 
-    /* HTML Preview styling */
     .diff-container {
         font-family: 'Segoe UI', sans-serif;
         font-size: 14px;
@@ -597,15 +633,16 @@ if doc1_file and doc2_file:
         # Preview Columns
         c1, c2 = st.columns(2)
         
-        def show_preview(col, title, p_type, p_data):
+        def show_preview(col, title, p_type, p_data, ext):
             with col:
-                # Construct the entire HTML block as a single string to prevent layout breaking
+                # If PDF type is 'html', add a badge saying "Text Mode" (due to size)
+                badge = '<span class="preview-badge">Text Preview (Large File)</span>' if p_type == 'html' and ext == 'pdf' else ''
+                
                 if p_type == 'pdf':
                     b64 = base64.b64encode(p_data).decode('utf-8')
-                    # Note: Zoom is controlled by browser settings. 
                     html_block = f"""
                     <div class="preview-wrapper">
-                        <div class="preview-header">{title}</div>
+                        <div class="preview-header">{title} <span style="font-weight:normal; font-size:12px; color:#666">Visual PDF View</span></div>
                         <div class="preview-content">
                             <iframe src="data:application/pdf;base64,{b64}" class="pdf-frame"></iframe>
                         </div>
@@ -615,7 +652,7 @@ if doc1_file and doc2_file:
                 else:
                     html_block = f"""
                     <div class="preview-wrapper">
-                        <div class="preview-header">{title}</div>
+                        <div class="preview-header">{title} {badge}</div>
                         <div class="preview-content">
                             <div class="diff-container">{p_data}</div>
                         </div>
@@ -623,8 +660,8 @@ if doc1_file and doc2_file:
                     """
                     st.markdown(html_block, unsafe_allow_html=True)
 
-        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'])
-        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'])
+        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'], r['ext1'])
+        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'], r['ext2'])
 
 else:
     st.info("👆 Please upload both documents to begin comparison.")
