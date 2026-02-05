@@ -40,34 +40,12 @@ with col2:
         doc2_file = st.file_uploader("Upload second document (PDF or Word)", type=['pdf', 'docx'], key="doc2_mixed")
 
 # ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-def truncate_filename(filename, max_length=30):
-    """Truncate filename if it exceeds max_length, preserving extension"""
-    if len(filename) <= max_length:
-        return filename
-    
-    # Split name and extension
-    name_parts = filename.rsplit('.', 1)
-    if len(name_parts) == 2:
-        name, ext = name_parts
-        # Reserve space for extension and ellipsis
-        available = max_length - len(ext) - 4  # -4 for "..." and "."
-        if available > 0:
-            return f"{name[:available]}...{ext}"
-        else:
-            return f"{filename[:max_length-3]}..."
-    else:
-        return f"{filename[:max_length-3]}..."
-
-# ============================================================================
 # UNIFIED EXTRACTION - FIXED
 # ============================================================================
 
 def extract_words_from_word(docx_file):
     """
-    FIXED: Extracts text including <xxxx> tags and handles tables properly
+    FIXED: Extracts text with tables in their correct position, properly separated
     Returns: (plain_text_string, word_objects, doc_obj)
     """
     try:
@@ -83,7 +61,7 @@ def extract_words_from_word(docx_file):
         from docx.text.paragraph import Paragraph
         
         def process_paragraph(para):
-            """Helper to process a paragraph - FIXED to include all text"""
+            """Helper to process a paragraph"""
             para_text = para.text.strip()
             if not para_text:
                 return
@@ -91,12 +69,10 @@ def extract_words_from_word(docx_file):
             # Detect Heading
             is_heading_para = para.style.name.startswith('Heading')
             
-            # FIXED: Get ALL text including special characters like < and >
-            # The issue was that .split() was working fine, but we need to ensure
-            # we're getting the complete text from the paragraph
+            # Extract text preserving exact character-level formatting
             full_para_text = para.text
             
-            # Split by whitespace - this preserves <xxxx> tags
+            # Split by actual whitespace to get tokens
             tokens = full_para_text.split()
             
             for token in tokens:
@@ -134,7 +110,7 @@ def extract_words_from_word(docx_file):
                 for cell_idx, cell in enumerate(row.cells):
                     cell_text = cell.text.strip()
                     if cell_text:
-                        # Split cell text into tokens - preserves <xxxx>
+                        # Split cell text into tokens
                         tokens = cell_text.split()
                         for token in tokens:
                             if token.strip():
@@ -299,7 +275,7 @@ def extract_words_from_pdf(pdf_file):
 
 def normalize_word(word):
     """
-    IMPROVED: Better normalization that handles hyphens correctly
+    IMPROVED: Better normalization that handles spacing and punctuation issues
     """
     import string
     
@@ -310,16 +286,8 @@ def normalize_word(word):
     # Remove all whitespace (to handle extraction differences)
     word = ''.join(word.split())
     
-    # IMPROVED: Handle hyphens more carefully
-    # Standardize different types of hyphens/dashes to regular hyphen
-    word = word.replace('–', '-').replace('—', '-').replace('‐', '-')
-    
-    # Strip leading/trailing punctuation EXCEPT hyphens
-    # This keeps "multi-word" intact but removes trailing periods, commas, etc.
-    while word and word[0] in string.punctuation and word[0] != '-':
-        word = word[1:]
-    while word and word[-1] in string.punctuation and word[-1] != '-':
-        word = word[:-1]
+    # Strip leading/trailing punctuation but preserve internal ones
+    word = word.strip(string.punctuation + string.whitespace)
     
     # Convert to lowercase
     normalized = word.lower()
@@ -446,13 +414,11 @@ def create_html_preview(word_objects, diff_indices):
             if obj.get('is_italic'):
                 word_html.append('<em>')
             
-            # Add the word with or without highlight (escape HTML)
-            import html
-            escaped_text = html.escape(obj["text"])
+            # Add the word with or without highlight
             if text_idx in diff_indices:
-                word_html.append(f'<span class="highlight">{escaped_text}</span>')
+                word_html.append(f'<span class="highlight">{obj["text"]}</span>')
             else:
-                word_html.append(escaped_text)
+                word_html.append(obj["text"])
             
             # Close tags in reverse order
             if obj.get('is_italic'):
@@ -504,7 +470,7 @@ def create_html_preview(word_objects, diff_indices):
 
 def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=None):
     """
-    FIXED: Renders PDF with highlights using overlay method to prevent text invisibility
+    FIXED: Renders PDF pages with highlights, handling existing highlights properly
     Returns list of PIL Image objects.
     """
     page_images = []
@@ -513,14 +479,23 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
     for page_num in range(num_pages):
         page = doc[page_num]
         
-        # Render page to pixmap at 2x resolution for better quality
+        # FIXED: Remove existing highlights first to prevent text from becoming invisible
+        # Get all annotations and remove highlights
+        annot = page.first_annot
+        while annot:
+            next_annot = annot.next
+            if annot.type[0] == 8:  # 8 = Highlight annotation
+                page.delete_annot(annot)
+            annot = next_annot
+        
+        # Render page to pixmap (image) at 2x resolution for better quality
         mat = fitz.Matrix(2, 2)
         pix = page.get_pixmap(matrix=mat)
         
         # Convert to PIL Image
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         
-        # Draw highlights as overlay rectangles
+        # Draw highlights on the image
         from PIL import ImageDraw
         draw = ImageDraw.Draw(img, 'RGBA')
         
@@ -532,14 +507,13 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
                     # Scale coordinates by 2x (same as matrix)
                     x0, y0, x1, y1 = bbox[0]*2, bbox[1]*2, bbox[2]*2, bbox[3]*2
                     
-                    # Draw semi-transparent yellow rectangle as OVERLAY (not covering text)
+                    # Draw semi-transparent yellow rectangle
                     if word_info.get('in_table', False):
-                        fill_color = (255, 237, 224, 80)  # Light orange for tables, more transparent
+                        fill_color = (255, 237, 224, 100)  # Light orange for tables
                     else:
-                        fill_color = (255, 255, 0, 80)  # Yellow, more transparent
+                        fill_color = (255, 255, 0, 100)  # Yellow
                     
-                    # Use outline only to avoid covering text
-                    draw.rectangle([x0, y0, x1, y1], fill=fill_color, outline=(255, 200, 0, 255), width=3)
+                    draw.rectangle([x0, y0, x1, y1], fill=fill_color, outline=(255, 200, 0, 200), width=2)
         
         page_images.append({
             'page_num': page_num + 1,
@@ -554,40 +528,38 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
 
 def highlight_pdf_words(doc, word_data, diff_indices):
     """
-    FIXED: Create highlighted PDF using drawing method instead of annotations
-    This prevents text from becoming invisible on already-highlighted PDFs
+    FIXED: Create highlighted PDF handling existing highlights
     """
-    # Create a new document to avoid modifying the original
     highlighted_doc = fitz.open()
-    
     for page_num in range(len(doc)):
         page = doc[page_num]
         new_page = highlighted_doc.new_page(width=page.rect.width, height=page.rect.height)
         new_page.show_pdf_page(new_page.rect, doc, page_num)
         
-        # Instead of using highlight annotations, draw rectangles
+        # FIXED: Remove any existing highlights first
+        annot = new_page.first_annot
+        while annot:
+            next_annot = annot.next
+            if annot.type[0] == 8:  # 8 = Highlight annotation
+                new_page.delete_annot(annot)
+            annot = next_annot
+        
+        # Add new highlights
         for word_idx in diff_indices:
             if word_idx < len(word_data):
                 word_info = word_data[word_idx]
                 if word_info['page'] == page_num:
                     bbox = word_info['bbox']
                     rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
-                    
                     try:
-                        # Use drawing instead of annotations
+                        highlight = new_page.add_highlight_annot(rect)
                         if word_info.get('in_table', False):
-                            color = (1.0, 0.93, 0.88)  # Light orange for tables
+                            highlight.set_colors(stroke=[1.0, 0.93, 0.88])
                         else:
-                            color = (1.0, 1.0, 0.0)  # Yellow
-                        
-                        # Draw semi-transparent rectangle
-                        shape = new_page.new_shape()
-                        shape.draw_rect(rect)
-                        shape.finish(fill=color, color=color, fill_opacity=0.3, stroke_opacity=0.5, width=0.5)
-                        shape.commit()
-                    except Exception as e:
+                            highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
+                        highlight.update()
+                    except: 
                         pass
-    
     return highlighted_doc
 
 def highlight_word_doc(doc, word_objects, diff_indices):
@@ -673,17 +645,9 @@ def run_comparison(d1, d2):
     is_pdf1 = d1.name.endswith('.pdf')
     is_pdf2 = d2.name.endswith('.pdf')
     
-    # Extract original filenames
+    # FIXED: Extract original filenames
     doc1_name = os.path.splitext(d1.name)[0]
     doc2_name = os.path.splitext(d2.name)[0]
-    
-    # Get extensions
-    ext1 = 'pdf' if is_pdf1 else 'docx'
-    ext2 = 'pdf' if is_pdf2 else 'docx'
-    
-    # Create display names (truncated for preview)
-    doc1_display = truncate_filename(f"{doc1_name}.{ext1}")
-    doc2_display = truncate_filename(f"{doc2_name}.{ext2}")
     
     # 1. Extract
     progress_bar.progress(10, text="Extracting text from documents...")
@@ -764,13 +728,11 @@ def run_comparison(d1, d2):
     progress_bar.empty()
     
     return {
-        'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': ext1,
-        'p2_type': preview2_type, 'p2_data': preview2_data, 'd2_bytes': pdf2_bytes, 'ext2': ext2,
+        'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': 'pdf' if is_pdf1 else 'docx',
+        'p2_type': preview2_type, 'p2_data': preview2_data, 'd2_bytes': pdf2_bytes, 'ext2': 'pdf' if is_pdf2 else 'docx',
         'info': info,
         'doc1_name': doc1_name,
-        'doc2_name': doc2_name,
-        'doc1_display': doc1_display,
-        'doc2_display': doc2_display
+        'doc2_name': doc2_name
     }
 
 # CSS - IMPROVED with table styling
@@ -912,7 +874,7 @@ if doc1_file and doc2_file:
         
         st.markdown("---")
         
-        # Downloads - Use original filenames with "highlighted_" prefix
+        # Downloads - FIXED: Use original filenames with "highlighted_" prefix
         st.markdown("### Download Highlighted Documents")
         dl_c1, dl_c2 = st.columns(2)
         
@@ -938,11 +900,11 @@ if doc1_file and doc2_file:
         # Preview Columns
         c1, c2 = st.columns(2)
         
-        def show_preview(col, display_name, p_type, p_data):
+        def show_preview(col, title, p_type, p_data, ext, doc_name):
             with col:
                 if p_type == 'pdf_images':
-                    # Show PDF as rendered images - Display truncated name
-                    st.markdown(f"#### {display_name}")
+                    # Show PDF as rendered images - FIXED: Display document name
+                    st.markdown(f"#### {doc_name}.{ext}")
                     
                     with st.container(height=700):
                         for page_info in p_data:
@@ -956,13 +918,13 @@ if doc1_file and doc2_file:
                                 st.divider()
                     
                 else:
-                    # HTML preview for Word docs - Display truncated name
-                    st.markdown(f"#### {display_name}")
+                    # HTML preview for Word docs - FIXED: Display document name
+                    st.markdown(f"#### {doc_name}.{ext}")
                     with st.container(height=700):
                         st.markdown(f'<div class="diff-container">{p_data}</div>', unsafe_allow_html=True)
 
-        show_preview(c1, r['doc1_display'], r['p1_type'], r['p1_data'])
-        show_preview(c2, r['doc2_display'], r['p2_type'], r['p2_data'])
+        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'], r['ext1'], r['doc1_name'])
+        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'], r['ext2'], r['doc2_name'])
 
 else:
     st.info("👆 Please upload both documents to begin comparison.")
