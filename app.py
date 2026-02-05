@@ -121,7 +121,7 @@ def extract_words_from_word(docx_file):
                     })
                     text_segments.append(token)
             
-            # Add paragraph break
+            # FIXED: Only add ONE newline per paragraph
             word_objects.append({'type': 'newline', 'text': '\n'})
         
         def process_table(table):
@@ -154,7 +154,7 @@ def extract_words_from_word(docx_file):
                 word_objects.append({'type': 'row_end', 'text': '\n'})
             
             word_objects.append({'type': 'table_end', 'text': ''})
-            # Add extra newline after table for separation
+            # FIXED: Only add ONE newline after table
             word_objects.append({'type': 'newline', 'text': '\n'})
         
         # Iterate through body elements in order
@@ -334,51 +334,35 @@ def run_diff(text1, text2):
 
 def create_html_preview(word_objects, diff_indices):
     """
-    FROM CODE 2: Better HTML generation with proper table separation
+    FIXED: Simplified HTML generation with correct highlighting
     """
     html_parts = []
+    html_parts.append('<div style="padding: 20px; line-height: 1.8;">')
     
     text_idx = 0
     obj_idx = 0
-    in_paragraph = False
     in_table = False
-    in_table_row = False
     
     while obj_idx < len(word_objects):
         obj = word_objects[obj_idx]
         
         if obj['type'] == 'table_start':
-            # Close any open paragraph
-            if in_paragraph:
-                html_parts.append('</p>')
-                in_paragraph = False
-            html_parts.append('<div style="margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #ddd;">')
-            html_parts.append('<table style="width: 100%; border-collapse: collapse;"><tr>')
+            html_parts.append('<div style="margin: 15px 0; overflow-x: auto;">')
+            html_parts.append('<table style="width: 100%; border-collapse: collapse; border: 1px solid #ddd;"><tr>')
             in_table = True
-            in_table_row = True
-            html_parts.append('<td style="padding: 8px; border: 1px solid #ddd;">')
+            html_parts.append('<td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
             
         elif obj['type'] == 'table_end':
-            if in_table_row:
-                html_parts.append('</td></tr>')
-                in_table_row = False
-            html_parts.append('</table>')
-            html_parts.append('</div>')
+            html_parts.append('</td></tr></table></div>')
             in_table = False
             
         elif obj['type'] == 'word':
-            # Start paragraph if not in table and not already in one
-            if not in_paragraph and not in_table:
-                html_parts.append('<p>')
-                in_paragraph = True
-            
             word_html = []
             
-            # Apply heading style inline
+            # Apply formatting
             if obj.get('is_heading'):
                 word_html.append('<span style="font-size: 1.2em; font-weight: bold; color: #2c3e50;">')
-            
-            if obj.get('is_bold') and not obj.get('is_heading'):
+            elif obj.get('is_bold'):
                 word_html.append('<strong>')
             
             if obj.get('is_italic'):
@@ -387,20 +371,21 @@ def create_html_preview(word_objects, diff_indices):
             # Add the word with or without highlight (escape HTML)
             import html
             escaped_text = html.escape(obj["text"])
+            
+            # FIXED: Only highlight if this word index is in diff_indices
             if text_idx in diff_indices:
                 word_html.append(f'<span class="highlight">{escaped_text}</span>')
             else:
                 word_html.append(escaped_text)
             
-            # Close tags in reverse order
+            # Close tags
             if obj.get('is_italic'):
                 word_html.append('</em>')
             
-            if obj.get('is_bold') and not obj.get('is_heading'):
-                word_html.append('</strong>')
-            
             if obj.get('is_heading'):
                 word_html.append('</span>')
+            elif obj.get('is_bold'):
+                word_html.append('</strong>')
             
             html_parts.append(''.join(word_html))
             html_parts.append(' ')
@@ -408,36 +393,20 @@ def create_html_preview(word_objects, diff_indices):
             text_idx += 1
             
         elif obj['type'] == 'row_end':
-            # End of table row
             if in_table:
-                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd;">')
+                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
                 
         elif obj['type'] == 'newline':
             if not in_table:
-                # Close paragraph if open
-                if in_paragraph:
-                    html_parts.append('</p>')
-                    in_paragraph = False
-                html_parts.append('<br>')
+                html_parts.append('<br><br>')
             
         elif obj['type'] == 'separator':
             if in_table:
-                # Cell separator in table
-                html_parts.append('</td><td style="padding: 8px; border: 1px solid #ddd;">')
-            else:
-                html_parts.append(' <span style="color:#ccc">|</span> ')
+                html_parts.append('</td><td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
             
         obj_idx += 1
     
-    # Close final paragraph if open
-    if in_paragraph:
-        html_parts.append('</p>')
-    
-    if in_table:
-        if in_table_row:
-            html_parts.append('</td></tr>')
-        html_parts.append('</table></div>')
-        
+    html_parts.append('</div>')
     return "".join(html_parts)
 
 def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=None):
@@ -636,6 +605,12 @@ def run_comparison(d1, d2):
     progress_bar.progress(50, text="Analyzing differences...")
     diffs1, diffs2, info = run_diff(text1, text2)
     
+    # Debug output
+    st.write(f"DEBUG - Doc1: {len(w_objs1)} objects, {info['diff_words1']} differences")
+    st.write(f"DEBUG - Doc2: {len(w_objs2)} objects, {info['diff_words2']} differences")
+    st.write(f"DEBUG - Sample diff indices Doc1: {sorted(list(diffs1))[:10] if diffs1 else 'None'}")
+    st.write(f"DEBUG - Sample diff indices Doc2: {sorted(list(diffs2))[:10] if diffs2 else 'None'}")
+    
     # 3. Generate Previews & Downloads
     progress_bar.progress(70, text="Generating highlighted documents...")
     
@@ -697,7 +672,7 @@ def run_comparison(d1, d2):
         'doc2_display': doc2_display
     }
 
-# CSS - FROM CODE 1 (Original highlight styling)
+# CSS - FROM CODE 1 (Original highlight styling) + improvements
 st.markdown("""
 <style>
     /* Global tweaks */
@@ -754,6 +729,9 @@ st.markdown("""
         overflow-y: auto;
         height: 100%;
         background-color: #ffffff;
+        color: #333;
+        max-width: 100%;
+        word-wrap: break-word;
     }
 
     .diff-container h3 {
@@ -763,16 +741,33 @@ st.markdown("""
         font-size: 18px;
     }
 
+    /* CRITICAL: Highlight style */
     .highlight {
-        background-color: #ffff00;
-        padding: 2px 0;
-        font-weight: bold;
+        background-color: #ffff00 !important;
+        padding: 2px 4px !important;
+        font-weight: bold !important;
+        border-radius: 2px;
+    }
+    
+    /* Table styling */
+    .diff-container table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0;
+    }
+    
+    .diff-container td {
+        padding: 8px;
+        border: 1px solid #ddd;
+        vertical-align: top;
     }
     
     /* Image styling for PDF pages */
     img {
         border-radius: 4px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        max-width: 100%;
+        height: auto;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -842,6 +837,7 @@ if doc1_file and doc2_file:
                 if p_type == 'pdf_images':
                     # Show PDF as rendered images using Streamlit's native image display
                     st.markdown(f"#### {display_name}")
+                    st.caption(f"📄 {len(p_data)} pages with differences highlighted")
                     
                     # Create a scrollable container
                     with st.container(height=700):
@@ -857,16 +853,10 @@ if doc1_file and doc2_file:
                                 st.divider()
                     
                 else:
-                    # HTML preview for Word docs
+                    # HTML preview for Word docs - SIMPLIFIED
                     st.markdown(f"#### {display_name}")
-                    html_block = f"""
-                    <div class="preview-wrapper">
-                        <div class="preview-content">
-                            <div class="diff-container">{p_data}</div>
-                        </div>
-                    </div>
-                    """
-                    st.markdown(html_block, unsafe_allow_html=True)
+                    with st.container(height=700):
+                        st.markdown(p_data, unsafe_allow_html=True)
 
         show_preview(c1, r['doc1_display'], r['p1_type'], r['p1_data'])
         show_preview(c2, r['doc2_display'], r['p2_type'], r['p2_data'])
