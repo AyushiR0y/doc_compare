@@ -40,12 +40,12 @@ with col2:
         doc2_file = st.file_uploader("Upload second document (PDF or Word)", type=['pdf', 'docx'], key="doc2_mixed")
 
 # ============================================================================
-# UNIFIED EXTRACTION - FIXED
+# UNIFIED EXTRACTION - FIXED TO PRESERVE TABLE ORDER
 # ============================================================================
 
 def extract_words_from_word(docx_file):
     """
-    FIXED: Extracts text with tables in their correct position, properly separated
+    FIXED: Extracts text with tables in their correct position in document flow
     Returns: (plain_text_string, word_objects, doc_obj)
     """
     try:
@@ -54,6 +54,9 @@ def extract_words_from_word(docx_file):
         
         word_objects = []
         text_segments = []
+        
+        # CRITICAL FIX: Process document elements in order (paragraphs AND tables)
+        # We need to iterate through the document body to get elements in sequence
         
         from docx.oxml.text.paragraph import CT_P
         from docx.oxml.table import CT_Tbl
@@ -103,7 +106,7 @@ def extract_words_from_word(docx_file):
             word_objects.append({'type': 'newline', 'text': '\n'})
         
         def process_table(table):
-            """Helper to process a table - IMPROVED with proper separation"""
+            """Helper to process a table"""
             word_objects.append({'type': 'table_start', 'text': ''})
             
             for row_idx, row in enumerate(table.rows):
@@ -129,10 +132,9 @@ def extract_words_from_word(docx_file):
                         word_objects.append({'type': 'separator', 'text': '|'})
                 
                 # Add row separator
-                word_objects.append({'type': 'row_end', 'text': '\n'})
+                word_objects.append({'type': 'newline', 'text': '\n'})
             
             word_objects.append({'type': 'table_end', 'text': ''})
-            # Add extra newline after table for separation
             word_objects.append({'type': 'newline', 'text': '\n'})
         
         # Iterate through body elements in order
@@ -364,7 +366,7 @@ def run_diff(text1, text2):
 
 def create_html_preview(word_objects, diff_indices):
     """
-    IMPROVED: Better HTML generation with proper table separation
+    IMPROVED: Better HTML generation with table support
     """
     html_parts = []
     
@@ -435,13 +437,11 @@ def create_html_preview(word_objects, diff_indices):
             
             text_idx += 1
             
-        elif obj['type'] == 'row_end':
-            # End of table row
-            if in_table:
-                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd;">')
-                
         elif obj['type'] == 'newline':
-            if not in_table:
+            if in_table:
+                # In table, newline means end of row, start new row
+                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd;">')
+            else:
                 # Close paragraph if open
                 if in_paragraph:
                     html_parts.append('</p>')
@@ -470,7 +470,7 @@ def create_html_preview(word_objects, diff_indices):
 
 def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=None):
     """
-    FIXED: Renders PDF pages with highlights, handling existing highlights properly
+    Renders PDF pages as PNG images with highlight rectangles drawn on them.
     Returns list of PIL Image objects.
     """
     page_images = []
@@ -478,15 +478,6 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
     
     for page_num in range(num_pages):
         page = doc[page_num]
-        
-        # FIXED: Remove existing highlights first to prevent text from becoming invisible
-        # Get all annotations and remove highlights
-        annot = page.first_annot
-        while annot:
-            next_annot = annot.next
-            if annot.type[0] == 8:  # 8 = Highlight annotation
-                page.delete_annot(annot)
-            annot = next_annot
         
         # Render page to pixmap (image) at 2x resolution for better quality
         mat = fitz.Matrix(2, 2)
@@ -527,24 +518,12 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
 # ============================================================================
 
 def highlight_pdf_words(doc, word_data, diff_indices):
-    """
-    FIXED: Create highlighted PDF handling existing highlights
-    """
     highlighted_doc = fitz.open()
     for page_num in range(len(doc)):
         page = doc[page_num]
         new_page = highlighted_doc.new_page(width=page.rect.width, height=page.rect.height)
         new_page.show_pdf_page(new_page.rect, doc, page_num)
         
-        # FIXED: Remove any existing highlights first
-        annot = new_page.first_annot
-        while annot:
-            next_annot = annot.next
-            if annot.type[0] == 8:  # 8 = Highlight annotation
-                new_page.delete_annot(annot)
-            annot = next_annot
-        
-        # Add new highlights
         for word_idx in diff_indices:
             if word_idx < len(word_data):
                 word_info = word_data[word_idx]
@@ -558,8 +537,7 @@ def highlight_pdf_words(doc, word_data, diff_indices):
                         else:
                             highlight.set_colors(stroke=fitz.utils.getColor("yellow"))
                         highlight.update()
-                    except: 
-                        pass
+                    except: pass
     return highlighted_doc
 
 def highlight_word_doc(doc, word_objects, diff_indices):
@@ -645,10 +623,6 @@ def run_comparison(d1, d2):
     is_pdf1 = d1.name.endswith('.pdf')
     is_pdf2 = d2.name.endswith('.pdf')
     
-    # FIXED: Extract original filenames
-    doc1_name = os.path.splitext(d1.name)[0]
-    doc2_name = os.path.splitext(d2.name)[0]
-    
     # 1. Extract
     progress_bar.progress(10, text="Extracting text from documents...")
     
@@ -730,9 +704,7 @@ def run_comparison(d1, d2):
     return {
         'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': 'pdf' if is_pdf1 else 'docx',
         'p2_type': preview2_type, 'p2_data': preview2_data, 'd2_bytes': pdf2_bytes, 'ext2': 'pdf' if is_pdf2 else 'docx',
-        'info': info,
-        'doc1_name': doc1_name,
-        'doc2_name': doc2_name
+        'info': info
     }
 
 # CSS - IMPROVED with table styling
@@ -874,7 +846,7 @@ if doc1_file and doc2_file:
         
         st.markdown("---")
         
-        # Downloads - FIXED: Use original filenames with "highlighted_" prefix
+        # Downloads
         st.markdown("### Download Highlighted Documents")
         dl_c1, dl_c2 = st.columns(2)
         
@@ -882,7 +854,7 @@ if doc1_file and doc2_file:
             st.download_button(
                 "⬇️ Download Doc 1", 
                 r['d1_bytes'].getvalue(), 
-                file_name=f"highlighted_{r['doc1_name']}.{r['ext1']}", 
+                file_name=f"doc1_highlighted.{r['ext1']}", 
                 mime="application/pdf" if r['ext1']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl1"
             )
@@ -890,7 +862,7 @@ if doc1_file and doc2_file:
             st.download_button(
                 "⬇️ Download Doc 2", 
                 r['d2_bytes'].getvalue(), 
-                file_name=f"highlighted_{r['doc2_name']}.{r['ext2']}", 
+                file_name=f"doc2_highlighted.{r['ext2']}", 
                 mime="application/pdf" if r['ext2']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl2"
             )
@@ -900,11 +872,11 @@ if doc1_file and doc2_file:
         # Preview Columns
         c1, c2 = st.columns(2)
         
-        def show_preview(col, title, p_type, p_data, ext, doc_name):
+        def show_preview(col, title, p_type, p_data, ext):
             with col:
                 if p_type == 'pdf_images':
-                    # Show PDF as rendered images - FIXED: Display document name
-                    st.markdown(f"#### {doc_name}.{ext}")
+                    # Show PDF as rendered images
+                    st.markdown(f"#### {title}")
                     
                     with st.container(height=700):
                         for page_info in p_data:
@@ -918,13 +890,13 @@ if doc1_file and doc2_file:
                                 st.divider()
                     
                 else:
-                    # HTML preview for Word docs - FIXED: Display document name
-                    st.markdown(f"#### {doc_name}.{ext}")
+                    # HTML preview for Word docs
+                    st.markdown(f"#### {title}")
                     with st.container(height=700):
                         st.markdown(f'<div class="diff-container">{p_data}</div>', unsafe_allow_html=True)
 
-        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'], r['ext1'], r['doc1_name'])
-        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'], r['ext2'], r['doc2_name'])
+        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'], r['ext1'])
+        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'], r['ext2'])
 
 else:
     st.info("👆 Please upload both documents to begin comparison.")
