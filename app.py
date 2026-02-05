@@ -40,12 +40,34 @@ with col2:
         doc2_file = st.file_uploader("Upload second document (PDF or Word)", type=['pdf', 'docx'], key="doc2_mixed")
 
 # ============================================================================
-# UNIFIED EXTRACTION (Source of Truth)
+# UTILITY FUNCTIONS
+# ============================================================================
+
+def truncate_filename(filename, max_length=30):
+    """Truncate filename if it exceeds max_length, preserving extension"""
+    if len(filename) <= max_length:
+        return filename
+    
+    # Split name and extension
+    name_parts = filename.rsplit('.', 1)
+    if len(name_parts) == 2:
+        name, ext = name_parts
+        # Reserve space for extension and ellipsis
+        available = max_length - len(ext) - 4  # -4 for "..." and "."
+        if available > 0:
+            return f"{name[:available]}...{ext}"
+        else:
+            return f"{filename[:max_length-3]}..."
+    else:
+        return f"{filename[:max_length-3]}..."
+
+# ============================================================================
+# EXTRACTION - FROM CODE 1 FOR PDF, CODE 2 FOR WORD
 # ============================================================================
 
 def extract_words_from_word(docx_file):
     """
-    Extracts a unified list of tokens from Word.
+    FROM CODE 2: Extracts text including <xxxx> tags and handles tables properly
     Returns: (plain_text_string, word_objects, doc_obj)
     """
     try:
@@ -55,65 +77,110 @@ def extract_words_from_word(docx_file):
         word_objects = []
         text_segments = []
         
-        for para in doc.paragraphs:
+        from docx.oxml.text.paragraph import CT_P
+        from docx.oxml.table import CT_Tbl
+        from docx.table import _Cell, Table
+        from docx.text.paragraph import Paragraph
+        
+        def process_paragraph(para):
+            """Helper to process a paragraph - FIXED to include all text"""
             para_text = para.text.strip()
             if not para_text:
-                continue
+                return
             
             # Detect Heading
-            is_heading_para = "Heading" in para.style.name
+            is_heading_para = para.style.name.startswith('Heading')
             
-            # Iterate runs
-            for run in para.runs:
-                if not run.text:
-                    continue
-                
-                words_in_run = run.text.split()
-                for w in words_in_run:
+            # Get ALL text including special characters like < and >
+            full_para_text = para.text
+            
+            # Split by whitespace - this preserves <xxxx> tags
+            tokens = full_para_text.split()
+            
+            for token in tokens:
+                if token.strip():
+                    # Determine formatting from runs
+                    is_bold = False
+                    is_italic = False
+                    
+                    for run in para.runs:
+                        if token in run.text:
+                            if run.bold:
+                                is_bold = True
+                            if run.italic:
+                                is_italic = True
+                            break
+                    
                     word_objects.append({
-                        'text': w,
+                        'text': token,
                         'type': 'word',
-                        'is_bold': run.bold,
-                        'is_italic': run.italic,
-                        'is_heading': is_heading_para
+                        'is_bold': is_bold,
+                        'is_italic': is_italic,
+                        'is_heading': is_heading_para,
+                        'in_table': False
                     })
-                    text_segments.append(w)
+                    text_segments.append(token)
             
-            # Add paragraph break marker
+            # Add paragraph break
             word_objects.append({'type': 'newline', 'text': '\n'})
         
-        # Handle Tables
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for para in cell.paragraphs:
-                        para_text = para.text.strip()
-                        if para_text:
-                            words = para.text.split()
-                            for w in words:
+        def process_table(table):
+            """Helper to process a table - IMPROVED with proper separation"""
+            word_objects.append({'type': 'table_start', 'text': ''})
+            
+            for row_idx, row in enumerate(table.rows):
+                for cell_idx, cell in enumerate(row.cells):
+                    cell_text = cell.text.strip()
+                    if cell_text:
+                        # Split cell text into tokens - preserves <xxxx>
+                        tokens = cell_text.split()
+                        for token in tokens:
+                            if token.strip():
                                 word_objects.append({
-                                    'text': w,
+                                    'text': token,
                                     'type': 'word',
                                     'is_bold': False,
                                     'is_italic': False,
-                                    'is_heading': False
+                                    'is_heading': False,
+                                    'in_table': True
                                 })
-                                text_segments.append(w)
-                    word_objects.append({'type': 'separator', 'text': '|'}) # Cell separator
-                word_objects.append({'type': 'newline', 'text': '\n'}) # Row separator
+                                text_segments.append(token)
+                    
+                    # Add cell separator (except for last cell in row)
+                    if cell_idx < len(row.cells) - 1:
+                        word_objects.append({'type': 'separator', 'text': '|'})
+                
+                # Add row separator
+                word_objects.append({'type': 'row_end', 'text': '\n'})
             
-            word_objects.append({'type': 'newline', 'text': '\n'}) # Table separator
+            word_objects.append({'type': 'table_end', 'text': ''})
+            # Add extra newline after table for separation
+            word_objects.append({'type': 'newline', 'text': '\n'})
+        
+        # Iterate through body elements in order
+        for element in doc.element.body:
+            if isinstance(element, CT_P):
+                # It's a paragraph
+                para = Paragraph(element, doc)
+                process_paragraph(para)
+                
+            elif isinstance(element, CT_Tbl):
+                # It's a table
+                table = Table(element, doc)
+                process_table(table)
 
         extracted_text = ' '.join(text_segments)
         return extracted_text, word_objects, doc
         
     except Exception as e:
         st.error(f"Error reading Word document: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None, None, None
 
 def extract_words_from_pdf(pdf_file):
     """
-    Extracts unified tokens from PDF.
+    FROM CODE 1: Original PDF extraction logic
     Returns: (plain_text_string, word_objects, highlight_data, pdf_doc)
     """
     try:
@@ -201,7 +268,7 @@ def extract_words_from_pdf(pdf_file):
         return None, None, None, None
 
 # ============================================================================
-# DIFF LOGIC
+# DIFF LOGIC - FROM CODE 1
 # ============================================================================
 
 def normalize_word(word):
@@ -262,63 +329,120 @@ def run_diff(text1, text2):
     return diff_indices1, diff_indices2, info
 
 # ============================================================================
-# PREVIEW GENERATION - NEW: PDF to Images with Highlights
+# PREVIEW GENERATION - CODE 2 FOR WORD, CODE 1 FOR PDF
 # ============================================================================
 
 def create_html_preview(word_objects, diff_indices):
     """
-    Generates HTML using word_objects and aligned diff_indices.
+    FROM CODE 2: Better HTML generation with proper table separation
     """
     html_parts = []
     
     text_idx = 0
     obj_idx = 0
+    in_paragraph = False
+    in_table = False
+    in_table_row = False
     
     while obj_idx < len(word_objects):
         obj = word_objects[obj_idx]
         
-        if obj['type'] == 'word':
+        if obj['type'] == 'table_start':
+            # Close any open paragraph
+            if in_paragraph:
+                html_parts.append('</p>')
+                in_paragraph = False
+            html_parts.append('<div style="margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 3px solid #ddd;">')
+            html_parts.append('<table style="width: 100%; border-collapse: collapse;"><tr>')
+            in_table = True
+            in_table_row = True
+            html_parts.append('<td style="padding: 8px; border: 1px solid #ddd;">')
+            
+        elif obj['type'] == 'table_end':
+            if in_table_row:
+                html_parts.append('</td></tr>')
+                in_table_row = False
+            html_parts.append('</table>')
+            html_parts.append('</div>')
+            in_table = False
+            
+        elif obj['type'] == 'word':
+            # Start paragraph if not in table and not already in one
+            if not in_paragraph and not in_table:
+                html_parts.append('<p>')
+                in_paragraph = True
+            
+            word_html = []
+            
+            # Apply heading style inline
+            if obj.get('is_heading'):
+                word_html.append('<span style="font-size: 1.2em; font-weight: bold; color: #2c3e50;">')
+            
+            if obj.get('is_bold') and not obj.get('is_heading'):
+                word_html.append('<strong>')
+            
+            if obj.get('is_italic'):
+                word_html.append('<em>')
+            
+            # Add the word with or without highlight (escape HTML)
+            import html
+            escaped_text = html.escape(obj["text"])
             if text_idx in diff_indices:
-                if obj.get('is_heading'):
-                    html_parts.append('<h3>')
-                if obj.get('is_bold'):
-                    html_parts.append('<b>')
-                
-                html_parts.append(f'<span class="highlight">{obj["text"]}</span>')
-                
-                if obj.get('is_bold'):
-                    html_parts.append('</b>')
-                if obj.get('is_heading'):
-                    html_parts.append('</h3>')
-                html_parts.append(' ')
+                word_html.append(f'<span class="highlight">{escaped_text}</span>')
             else:
-                if obj.get('is_heading'):
-                    html_parts.append('<h3>')
-                if obj.get('is_bold'):
-                    html_parts.append('<b>')
-                
-                html_parts.append(obj["text"])
-                
-                if obj.get('is_bold'):
-                    html_parts.append('</b>')
-                if obj.get('is_heading'):
-                    html_parts.append('</h3>')
-                html_parts.append(' ')
-                
+                word_html.append(escaped_text)
+            
+            # Close tags in reverse order
+            if obj.get('is_italic'):
+                word_html.append('</em>')
+            
+            if obj.get('is_bold') and not obj.get('is_heading'):
+                word_html.append('</strong>')
+            
+            if obj.get('is_heading'):
+                word_html.append('</span>')
+            
+            html_parts.append(''.join(word_html))
+            html_parts.append(' ')
+            
             text_idx += 1
             
+        elif obj['type'] == 'row_end':
+            # End of table row
+            if in_table:
+                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd;">')
+                
         elif obj['type'] == 'newline':
-            html_parts.append('<br>')
+            if not in_table:
+                # Close paragraph if open
+                if in_paragraph:
+                    html_parts.append('</p>')
+                    in_paragraph = False
+                html_parts.append('<br>')
+            
         elif obj['type'] == 'separator':
-            html_parts.append(' <span style="color:#ccc">|</span> ')
+            if in_table:
+                # Cell separator in table
+                html_parts.append('</td><td style="padding: 8px; border: 1px solid #ddd;">')
+            else:
+                html_parts.append(' <span style="color:#ccc">|</span> ')
             
         obj_idx += 1
+    
+    # Close final paragraph if open
+    if in_paragraph:
+        html_parts.append('</p>')
+    
+    if in_table:
+        if in_table_row:
+            html_parts.append('</td></tr>')
+        html_parts.append('</table></div>')
         
     return "".join(html_parts)
 
 def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=None):
     """
-    Renders PDF pages as PNG images with highlight rectangles drawn on them.
+    FROM CODE 1: Renders PDF pages as PNG images with highlight rectangles
     Returns list of PIL Image objects.
     """
     page_images = []
@@ -362,10 +486,11 @@ def render_pdf_pages_with_highlights(doc, word_data, diff_indices, max_pages=Non
     return page_images
 
 # ============================================================================
-# HIGHLIGHTING FOR DOWNLOAD
+# HIGHLIGHTING FOR DOWNLOAD - FROM CODE 1
 # ============================================================================
 
 def highlight_pdf_words(doc, word_data, diff_indices):
+    """FROM CODE 1: Highlight PDF using annotations"""
     highlighted_doc = fitz.open()
     for page_num in range(len(doc)):
         page = doc[page_num]
@@ -389,6 +514,7 @@ def highlight_pdf_words(doc, word_data, diff_indices):
     return highlighted_doc
 
 def highlight_word_doc(doc, word_objects, diff_indices):
+    """FROM CODE 2: Highlight Word doc with proper table handling"""
     from docx.enum.text import WD_COLOR_INDEX
     
     text_idx = 0
@@ -403,45 +529,58 @@ def highlight_word_doc(doc, word_objects, diff_indices):
             text_idx += 1
         obj_idx += 1
     
-    w_idx = 0
     current_obj_idx = 0
     
-    for para in doc.paragraphs:
-        if not para.text.strip(): continue
-        
-        for run in para.runs:
-            if not run.text: continue
+    # Process paragraphs and tables IN ORDER using document body
+    from docx.oxml.text.paragraph import CT_P
+    from docx.oxml.table import CT_Tbl
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    
+    for element in doc.element.body:
+        if isinstance(element, CT_P):
+            # It's a paragraph
+            para = Paragraph(element, doc)
+            if not para.text.strip():
+                continue
             
-            run_words = run.text.split()
-            highlight_run = False
-            
-            for _ in run_words:
-                while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]['type'] != 'word':
+            for run in para.runs:
+                if not run.text:
+                    continue
+                
+                run_words = run.text.split()
+                highlight_run = False
+                
+                for _ in run_words:
+                    while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]['type'] != 'word':
+                        current_obj_idx += 1
+                    
+                    if current_obj_idx < len(word_objects) and current_obj_idx in obj_indices_to_highlight:
+                        highlight_run = True
                     current_obj_idx += 1
                 
-                if current_obj_idx in obj_indices_to_highlight:
-                    highlight_run = True
-                current_obj_idx += 1
-            
-            if highlight_run:
-                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    for run in para.runs:
-                        if not run.text: continue
-                        highlight_run = False
-                        run_words = run.text.split()
-                        for _ in run_words:
-                             while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]['type'] != 'word':
-                                current_obj_idx += 1
-                             if current_obj_idx in obj_indices_to_highlight:
-                                highlight_run = True
-                             current_obj_idx += 1
-                        if highlight_run:
-                            run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
+                if highlight_run:
+                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                    
+        elif isinstance(element, CT_Tbl):
+            # It's a table
+            table = Table(element, doc)
+            for row in table.rows:
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            if not run.text:
+                                continue
+                            highlight_run = False
+                            run_words = run.text.split()
+                            for _ in run_words:
+                                 while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]['type'] != 'word':
+                                    current_obj_idx += 1
+                                 if current_obj_idx < len(word_objects) and current_obj_idx in obj_indices_to_highlight:
+                                    highlight_run = True
+                                 current_obj_idx += 1
+                            if highlight_run:
+                                run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
 
     output = BytesIO()
     doc.save(output)
@@ -457,6 +596,18 @@ def run_comparison(d1, d2):
     
     is_pdf1 = d1.name.endswith('.pdf')
     is_pdf2 = d2.name.endswith('.pdf')
+    
+    # Extract original filenames (FROM CODE 2)
+    doc1_name = os.path.splitext(d1.name)[0]
+    doc2_name = os.path.splitext(d2.name)[0]
+    
+    # Get extensions
+    ext1 = 'pdf' if is_pdf1 else 'docx'
+    ext2 = 'pdf' if is_pdf2 else 'docx'
+    
+    # Create display names (truncated for preview)
+    doc1_display = truncate_filename(f"{doc1_name}.{ext1}")
+    doc2_display = truncate_filename(f"{doc2_name}.{ext2}")
     
     # 1. Extract
     progress_bar.progress(10, text="Extracting text from documents...")
@@ -537,12 +688,16 @@ def run_comparison(d1, d2):
     progress_bar.empty()
     
     return {
-        'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': 'pdf' if is_pdf1 else 'docx',
-        'p2_type': preview2_type, 'p2_data': preview2_data, 'd2_bytes': pdf2_bytes, 'ext2': 'pdf' if is_pdf2 else 'docx',
-        'info': info
+        'p1_type': preview1_type, 'p1_data': preview1_data, 'd1_bytes': pdf1_bytes, 'ext1': ext1,
+        'p2_type': preview2_type, 'p2_data': preview2_data, 'd2_bytes': pdf2_bytes, 'ext2': ext2,
+        'info': info,
+        'doc1_name': doc1_name,
+        'doc2_name': doc2_name,
+        'doc1_display': doc1_display,
+        'doc2_display': doc2_display
     }
 
-# CSS - Updated with better styling
+# CSS - FROM CODE 1 (Original highlight styling)
 st.markdown("""
 <style>
     /* Global tweaks */
@@ -656,7 +811,7 @@ if doc1_file and doc2_file:
         
         st.markdown("---")
         
-        # Downloads
+        # Downloads - FROM CODE 2 (Use original filenames with "highlighted_" prefix)
         st.markdown("### Download Highlighted Documents")
         dl_c1, dl_c2 = st.columns(2)
         
@@ -664,7 +819,7 @@ if doc1_file and doc2_file:
             st.download_button(
                 "⬇️ Download Doc 1", 
                 r['d1_bytes'].getvalue(), 
-                file_name=f"doc1_highlighted.{r['ext1']}", 
+                file_name=f"highlighted_{r['doc1_name']}.{r['ext1']}", 
                 mime="application/pdf" if r['ext1']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl1"
             )
@@ -672,7 +827,7 @@ if doc1_file and doc2_file:
             st.download_button(
                 "⬇️ Download Doc 2", 
                 r['d2_bytes'].getvalue(), 
-                file_name=f"doc2_highlighted.{r['ext2']}", 
+                file_name=f"highlighted_{r['doc2_name']}.{r['ext2']}", 
                 mime="application/pdf" if r['ext2']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl2"
             )
@@ -682,12 +837,11 @@ if doc1_file and doc2_file:
         # Preview Columns
         c1, c2 = st.columns(2)
         
-        def show_preview(col, title, p_type, p_data, ext):
+        def show_preview(col, display_name, p_type, p_data):
             with col:
                 if p_type == 'pdf_images':
                     # Show PDF as rendered images using Streamlit's native image display
-                    st.markdown(f"#### {title}")
-                    st.caption(f"📄 {len(p_data)} pages with differences highlighted")
+                    st.markdown(f"#### {display_name}")
                     
                     # Create a scrollable container
                     with st.container(height=700):
@@ -704,7 +858,7 @@ if doc1_file and doc2_file:
                     
                 else:
                     # HTML preview for Word docs
-                    st.markdown(f"#### {title}")
+                    st.markdown(f"#### {display_name}")
                     html_block = f"""
                     <div class="preview-wrapper">
                         <div class="preview-content">
@@ -714,8 +868,8 @@ if doc1_file and doc2_file:
                     """
                     st.markdown(html_block, unsafe_allow_html=True)
 
-        show_preview(c1, "Document 1", r['p1_type'], r['p1_data'], r['ext1'])
-        show_preview(c2, "Document 2", r['p2_type'], r['p2_data'], r['ext2'])
+        show_preview(c1, r['doc1_display'], r['p1_type'], r['p1_data'])
+        show_preview(c2, r['doc2_display'], r['p2_type'], r['p2_data'])
 
 else:
     st.info("👆 Please upload both documents to begin comparison.")
