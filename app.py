@@ -42,13 +42,23 @@ else:
     st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
-# Radio button for comparison mode
+st.markdown(
+    """
+    <style>
+    div[data-testid="stRadio"] > label {
+        font-size: 1.1rem !important;
+        font-weight: 600;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 comparison_mode = st.radio(
     ":material/tune: Comparison Mode",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
     horizontal=True
 )
-
 # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
