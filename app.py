@@ -8,6 +8,12 @@ import os
 import tempfile
 import base64
 from PIL import Image
+import json
+import uuid
+from datetime import datetime, timezone
+from functools import lru_cache
+from urllib import request as urllib_request
+from urllib.error import URLError, HTTPError
 
 # UPDATED: Sidebar collapsed, layout wide
 st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="collapsed")
@@ -42,6 +48,97 @@ with col2:
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
+
+USAGE_LOG_FILE = "usage_logs.jsonl"
+
+
+def _safe_get_headers():
+    context = getattr(st, "context", None)
+    if not context:
+        return {}
+    headers = getattr(context, "headers", None)
+    return dict(headers) if headers else {}
+
+
+def _extract_client_ip(headers):
+    for key in ["x-forwarded-for", "x-real-ip", "cf-connecting-ip", "x-client-ip"]:
+        value = headers.get(key) or headers.get(key.title())
+        if value:
+            return value.split(",")[0].strip()
+    return "unknown"
+
+
+@lru_cache(maxsize=256)
+def _resolve_location_from_ip(ip_address):
+    if not ip_address or ip_address == "unknown":
+        return {
+            "country": "unknown",
+            "region": "unknown",
+            "city": "unknown",
+            "source": "none"
+        }
+
+    if ip_address.startswith("10.") or ip_address.startswith("192.168.") or ip_address.startswith("172."):
+        return {
+            "country": "private-network",
+            "region": "private-network",
+            "city": "private-network",
+            "source": "private-ip"
+        }
+
+    url = f"https://ipapi.co/{ip_address}/json/"
+    try:
+        with urllib_request.urlopen(url, timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return {
+            "country": payload.get("country_name", "unknown") or "unknown",
+            "region": payload.get("region", "unknown") or "unknown",
+            "city": payload.get("city", "unknown") or "unknown",
+            "source": "ipapi.co"
+        }
+    except (URLError, HTTPError, TimeoutError, json.JSONDecodeError):
+        return {
+            "country": "unknown",
+            "region": "unknown",
+            "city": "unknown",
+            "source": "lookup-failed"
+        }
+
+
+def _get_session_id():
+    if "usage_session_id" not in st.session_state:
+        st.session_state.usage_session_id = str(uuid.uuid4())
+    return st.session_state.usage_session_id
+
+
+def log_usage_event(doc1_name, doc2_name, ext1, ext2, comparison_mode):
+    headers = _safe_get_headers()
+    ip_address = _extract_client_ip(headers)
+    location = _resolve_location_from_ip(ip_address)
+
+    event = {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "comparison",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "session_id": _get_session_id(),
+        "upload_count": 2,
+        "comparison_mode": comparison_mode,
+        "doc1_name": doc1_name,
+        "doc2_name": doc2_name,
+        "doc1_type": ext1,
+        "doc2_type": ext2,
+        "client_ip": ip_address,
+        "client_country": location["country"],
+        "client_region": location["region"],
+        "client_city": location["city"],
+        "location_source": location["source"]
+    }
+
+    try:
+        with open(USAGE_LOG_FILE, "a", encoding="utf-8") as file:
+            file.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
 
 def truncate_filename(filename, max_length=30):
     """Truncate filename if it exceeds max_length, preserving extension"""
@@ -776,6 +873,7 @@ st.markdown("""
 if 'results' not in st.session_state: st.session_state.results = None
 if 'last_files' not in st.session_state: st.session_state.last_files = None
 if 'last_mode' not in st.session_state: st.session_state.last_mode = None
+if 'last_logged_key' not in st.session_state: st.session_state.last_logged_key = None
 
 if doc1_file and doc2_file:
     current_files = (doc1_file.name, doc2_file.name)
@@ -789,6 +887,17 @@ if doc1_file and doc2_file:
             st.session_state.results = res
             st.session_state.last_files = current_files
             st.session_state.last_mode = comparison_mode
+
+            log_key = (doc1_file.name, doc2_file.name, comparison_mode)
+            if st.session_state.last_logged_key != log_key:
+                log_usage_event(
+                    doc1_name=res['doc1_name'],
+                    doc2_name=res['doc2_name'],
+                    ext1=res['ext1'],
+                    ext2=res['ext2'],
+                    comparison_mode=comparison_mode
+                )
+                st.session_state.last_logged_key = log_key
         else:
             st.error("Comparison failed.")
 
