@@ -1,4 +1,5 @@
 streamlit
 PyMuPDF
 python-docx
+pandas
 
