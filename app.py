@@ -18,12 +18,33 @@ from urllib.error import URLError, HTTPError
 # UPDATED: Sidebar expanded, layout wide
 st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="expanded")
 
-st.title("📄 Document Diff Checker")
-st.markdown("Upload two documents (PDF or Word) to compare and highlight their differences")
+logo_b64 = ""
+try:
+    with open("logo.png", "rb") as logo_file:
+        logo_b64 = base64.b64encode(logo_file.read()).decode("utf-8")
+except OSError:
+    logo_b64 = ""
+
+if logo_b64:
+    st.markdown(
+        f"""
+        <div class="brand-header">
+            <img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>
+            <div class="brand-text">
+                <h1>Document Diff Checker</h1>
+                <p>Compare PDF and DOCX files with precision highlighting</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+else:
+    st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
+    st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
 # Radio button for comparison mode
 comparison_mode = st.radio(
-    "Select comparison mode:",
+    ":material/tune: Comparison Mode",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
     horizontal=True
 )
@@ -32,18 +53,18 @@ comparison_mode = st.radio(
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Document 1")
+    st.subheader(":material/description: Document 1")
     if comparison_mode == "Same Format (PDF vs PDF or Word vs Word)":
-        doc1_file = st.file_uploader("Upload first document", type=['pdf', 'docx'], key="doc1")
+        doc1_file = st.file_uploader("Select first document", type=['pdf', 'docx'], key="doc1")
     else:
-        doc1_file = st.file_uploader("Upload first document (PDF or Word)", type=['pdf', 'docx'], key="doc1_mixed")
+        doc1_file = st.file_uploader("Select first document (PDF or Word)", type=['pdf', 'docx'], key="doc1_mixed")
     
 with col2:
-    st.subheader("Document 2")
+    st.subheader(":material/description: Document 2")
     if comparison_mode == "Same Format (PDF vs PDF or Word vs Word)":
-        doc2_file = st.file_uploader("Upload second document (same format as Doc 1)", type=['pdf', 'docx'], key="doc2")
+        doc2_file = st.file_uploader("Select second document (same format as Document 1)", type=['pdf', 'docx'], key="doc2")
     else:
-        doc2_file = st.file_uploader("Upload second document (PDF or Word)", type=['pdf', 'docx'], key="doc2_mixed")
+        doc2_file = st.file_uploader("Select second document (PDF or Word)", type=['pdf', 'docx'], key="doc2_mixed")
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -772,10 +793,124 @@ def run_comparison(d1, d2):
 # CSS - FROM CODE 1 (Original highlight styling) + improvements
 st.markdown("""
 <style>
-    /* Global tweaks */
+    :root {
+        --brand: #005eac;
+        --brand-soft: #e8f2fb;
+        --text-strong: #0f172a;
+        --text-muted: #475569;
+        --panel: #ffffff;
+        --line: #dbe7f4;
+    }
+
+    html, body, [class*="css"] {
+        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+    }
+
+    .stApp {
+        background: linear-gradient(180deg, #f5f9ff 0%, #f8fbff 50%, #ffffff 100%);
+    }
+
     .main .block-container {
-        padding-top: 2rem;
+        padding-top: 1.25rem;
         max-width: 100%;
+    }
+
+    .brand-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 14px;
+        margin-bottom: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: 0 8px 22px rgba(0, 94, 172, 0.08);
+    }
+
+    .brand-logo {
+        width: 54px;
+        height: 54px;
+        border-radius: 10px;
+        object-fit: contain;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        padding: 6px;
+    }
+
+    .brand-text h1,
+    .app-title {
+        color: var(--brand);
+        margin: 0;
+        font-size: 1.85rem;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+    }
+
+    .brand-text p,
+    .app-subtitle {
+        color: var(--text-muted);
+        margin: 2px 0 0 0;
+        font-size: 0.95rem;
+    }
+
+    .stMarkdown h3 {
+        color: var(--brand);
+        letter-spacing: 0.01em;
+    }
+
+    div[data-testid="stFileUploader"] > section {
+        border: 1px dashed #91bde0 !important;
+        border-radius: 12px !important;
+        background: #fbfdff;
+    }
+
+    div[data-testid="stFileUploader"] small {
+        color: var(--text-muted);
+    }
+
+    div[data-testid="stRadio"] label {
+        color: var(--text-strong);
+    }
+
+    div[data-baseweb="radio"] > div {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 6px;
+    }
+
+    div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+    }
+
+    div[data-testid="metric-container"] {
+        background-color: #ffffff;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+    }
+
+    button[kind="primary"] {
+        background: linear-gradient(135deg, #005eac 0%, #1479ce 100%) !important;
+        border: none !important;
+        color: #ffffff !important;
+        border-radius: 10px !important;
+        box-shadow: 0 8px 18px rgba(0, 94, 172, 0.25) !important;
+    }
+
+    button[kind="secondary"] {
+        border-radius: 10px !important;
+        border: 1px solid #b8d4ea !important;
+        color: #0b3d66 !important;
+    }
+
+    div[data-testid="stDownloadButton"] button {
+        width: 100%;
+        border-radius: 10px !important;
     }
     
     /* Stats metrics */
@@ -791,20 +926,20 @@ st.markdown("""
         height: 85vh;
         display: flex;
         flex-direction: column;
-        border: 1px solid #ddd;
-        border-radius: 5px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
         background-color: #ffffff;
         overflow: hidden;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        box-shadow: 0 10px 22px rgba(0, 94, 172, 0.08);
     }
 
     .preview-header {
-        background-color: #f8f9fa;
+        background-color: #f2f8ff;
         padding: 10px 15px;
-        border-bottom: 1px solid #ddd;
+        border-bottom: 1px solid var(--line);
         font-weight: bold;
         font-size: 16px;
-        color: #333;
+        color: var(--brand);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -815,35 +950,36 @@ st.markdown("""
         position: relative;
         overflow-y: auto;
         overflow-x: hidden;
-        background: #f5f5f5;
+        background: #f7fbff;
     }
 
     .diff-container {
-        font-family: 'Segoe UI', sans-serif;
+        font-family: "Inter", "Segoe UI", sans-serif;
         font-size: 14px;
         line-height: 1.6;
         padding: 20px;
         overflow-y: auto;
         height: 100%;
         background-color: #ffffff;
-        color: #333;
+        color: var(--text-strong);
         max-width: 100%;
         word-wrap: break-word;
     }
 
     .diff-container h3 {
-        color: #2c3e50;
-        border-bottom: 2px solid #eee;
+        color: var(--brand);
+        border-bottom: 2px solid #d7e7f6;
         margin-top: 10px;
         font-size: 18px;
     }
 
     /* CRITICAL: Highlight style */
     .highlight {
-        background-color: #ffff00 !important;
+        background-color: #fff3a3 !important;
         padding: 2px 4px !important;
         font-weight: bold !important;
         border-radius: 2px;
+        outline: 1px solid #ffd84a;
     }
     
     /* Table styling */
@@ -855,16 +991,21 @@ st.markdown("""
     
     .diff-container td {
         padding: 8px;
-        border: 1px solid #ddd;
+        border: 1px solid #dbe7f4;
         vertical-align: top;
     }
     
     /* Image styling for PDF pages */
     img {
-        border-radius: 4px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-radius: 8px;
+        box-shadow: 0 6px 14px rgba(15, 23, 42, 0.1);
         max-width: 100%;
         height: auto;
+    }
+
+    [data-testid="stSidebar"] {
+        background: #f6faff;
+        border-right: 1px solid var(--line);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -903,7 +1044,7 @@ if doc1_file and doc2_file:
 
     if st.session_state.results:
         r = st.session_state.results
-        st.success("✅ Comparison Complete!")
+        st.success(":material/task_alt: Comparison complete")
         i = r['info']
         
         # Stats
@@ -916,12 +1057,12 @@ if doc1_file and doc2_file:
         st.markdown("---")
         
         # Downloads - FROM CODE 2 (Use original filenames with "highlighted_" prefix)
-        st.markdown("### Download Highlighted Documents")
+        st.markdown("### :material/download: Download Highlighted Documents")
         dl_c1, dl_c2 = st.columns(2)
         
         with dl_c1:
             st.download_button(
-                "⬇️ Download Doc 1", 
+                ":material/file_download: Download Document 1", 
                 r['d1_bytes'].getvalue(), 
                 file_name=f"highlighted_{r['doc1_name']}.{r['ext1']}", 
                 mime="application/pdf" if r['ext1']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -929,14 +1070,14 @@ if doc1_file and doc2_file:
             )
         with dl_c2:
             st.download_button(
-                "⬇️ Download Doc 2", 
+                ":material/file_download: Download Document 2", 
                 r['d2_bytes'].getvalue(), 
                 file_name=f"highlighted_{r['doc2_name']}.{r['ext2']}", 
                 mime="application/pdf" if r['ext2']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl2"
             )
             
-        st.markdown("### Document Preview (Highlighted)")
+        st.markdown("### :material/preview: Document Preview")
         
         # Preview Columns
         c1, c2 = st.columns(2)
@@ -946,7 +1087,7 @@ if doc1_file and doc2_file:
                 if p_type == 'pdf_images':
                     # Show PDF as rendered images using Streamlit's native image display
                     st.markdown(f"#### {display_name}")
-                    st.caption(f"📄 {len(p_data)} pages with differences highlighted")
+                    st.caption(f":material/article: {len(p_data)} pages with highlighted differences")
                     
                     # Create a scrollable container
                     with st.container(height=700):
@@ -971,4 +1112,4 @@ if doc1_file and doc2_file:
         show_preview(c2, r['doc2_display'], r['p2_type'], r['p2_data'])
 
 else:
-    st.info("👆 Please upload both documents to begin comparison.")
+    st.info(":material/upload_file: Upload both documents to begin comparison")

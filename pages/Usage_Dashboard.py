@@ -1,12 +1,93 @@
 import json
 import os
+import base64
 from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="Usage Dashboard", layout="wide")
-st.title("📊 Usage Dashboard")
-st.caption("Admin-only analytics for document comparison usage")
+st.set_page_config(page_title="Usage Dashboard", layout="wide", initial_sidebar_state="expanded")
+
+st.markdown("""
+<style>
+    :root {
+        --brand: #005eac;
+        --line: #dbe7f4;
+        --text-muted: #475569;
+    }
+    .stApp {
+        background: linear-gradient(180deg, #f5f9ff 0%, #f8fbff 50%, #ffffff 100%);
+    }
+    .main .block-container {
+        padding-top: 1.25rem;
+    }
+    .brand-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 14px;
+        margin-bottom: 12px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #ffffff;
+        box-shadow: 0 8px 22px rgba(0, 94, 172, 0.08);
+    }
+    .brand-logo {
+        width: 54px;
+        height: 54px;
+        border-radius: 10px;
+        object-fit: contain;
+        border: 1px solid var(--line);
+        background: #ffffff;
+        padding: 6px;
+    }
+    .brand-text h1 {
+        color: var(--brand);
+        margin: 0;
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+    }
+    .brand-text p {
+        color: var(--text-muted);
+        margin: 2px 0 0 0;
+        font-size: 0.95rem;
+    }
+    div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+    }
+    [data-testid="stSidebar"] {
+        background: #f6faff;
+        border-right: 1px solid var(--line);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+logo_b64 = ""
+try:
+    with open(Path(__file__).resolve().parent.parent / "logo.png", "rb") as logo_file:
+        logo_b64 = base64.b64encode(logo_file.read()).decode("utf-8")
+except OSError:
+    logo_b64 = ""
+
+if logo_b64:
+    st.markdown(
+        f"""
+        <div class="brand-header">
+            <img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>
+            <div class="brand-text">
+                <h1>Usage Dashboard</h1>
+                <p>Admin-only analytics for document comparison usage</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+else:
+    st.markdown("## :material/monitoring: Usage Dashboard")
+    st.caption("Admin-only analytics for document comparison usage")
 
 
 def _get_dashboard_password():
