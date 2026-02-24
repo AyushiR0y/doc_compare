@@ -5,6 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(page_title="Usage Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -215,7 +216,8 @@ def render_usage_dashboard():
             mode_counts[mode] = mode_counts.get(mode, 0) + 1
         if mode_counts:
             st.markdown("**Comparison module usage**")
-            st.pie_chart(pd.Series(mode_counts))
+            fig = px.pie(names=list(mode_counts.keys()), values=list(mode_counts.values()))
+            st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("**Recent usage events**")
     st.dataframe(
