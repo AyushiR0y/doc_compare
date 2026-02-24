@@ -207,7 +207,7 @@ def render_usage_dashboard():
         if daily_uploads:
             recent_days = dict(sorted(daily_uploads.items())[-30:])
             st.markdown("**Uploads per day (last 30 days)**")
-            st.line_chart(recent_days, height=220)
+            st.line_chart(recent_days, height=400)
 
     with chart_col2:
         mode_counts = {}
@@ -217,6 +217,7 @@ def render_usage_dashboard():
         if mode_counts:
             st.markdown("**Comparison module usage**")
             fig = px.pie(names=list(mode_counts.keys()), values=list(mode_counts.values()))
+            fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("**Recent usage events**")
