@@ -13,6 +13,15 @@ st.markdown("""
         --brand: #005eac;
         --line: #dbe7f4;
         --text-muted: #475569;
+        --text-strong: #0f172a;
+        --h1: 2rem;
+        --body: 0.97rem;
+        --small: 0.84rem;
+    }
+    html, body, [class*="css"] {
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        color: var(--text-strong);
     }
     .stApp {
         background: linear-gradient(180deg, #f5f9ff 0%, #f8fbff 50%, #ffffff 100%);
@@ -23,40 +32,61 @@ st.markdown("""
     .brand-header {
         display: flex;
         align-items: center;
-        gap: 14px;
-        padding: 10px 14px;
-        margin-bottom: 12px;
+        gap: 18px;
+        padding: 14px 18px;
+        margin-bottom: 16px;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: 16px;
         background: #ffffff;
         box-shadow: 0 8px 22px rgba(0, 94, 172, 0.08);
     }
     .brand-logo {
-        width: 54px;
-        height: 54px;
-        border-radius: 10px;
+        width: 96px;
+        height: 96px;
+        border-radius: 14px;
         object-fit: contain;
         border: 1px solid var(--line);
         background: #ffffff;
-        padding: 6px;
+        padding: 8px;
+        box-shadow: 0 6px 18px rgba(0, 94, 172, 0.14);
     }
     .brand-text h1 {
         color: var(--brand);
         margin: 0;
-        font-size: 1.75rem;
-        font-weight: 700;
-        letter-spacing: 0.02em;
+        font-size: var(--h1);
+        font-weight: 680;
+        letter-spacing: 0.01em;
+        line-height: 1.15;
     }
     .brand-text p {
         color: var(--text-muted);
-        margin: 2px 0 0 0;
-        font-size: 0.95rem;
+        margin: 6px 0 0 0;
+        font-size: var(--body);
+        line-height: 1.45;
+    }
+    .stMarkdown p,
+    .stCaption,
+    .stAlert {
+        font-size: var(--body);
+        line-height: 1.5;
     }
     div[data-testid="stMetric"] {
         background: #ffffff;
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 12px;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: var(--small);
+        color: #48617a;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.7rem;
+        font-weight: 700;
+        color: #0d3252;
     }
     [data-testid="stSidebar"] {
         background: #f6faff;

@@ -42,11 +42,14 @@ else:
     st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
+st.markdown("<div class='control-label'>:material/tune: Comparison Mode</div>", unsafe_allow_html=True)
+
 # Radio button for comparison mode
 comparison_mode = st.radio(
-    ":material/tune: Comparison Mode",
+    "Comparison Mode",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
-    horizontal=True
+    horizontal=True,
+    label_visibility="collapsed"
 )
 
 # Create two columns for file uploads
@@ -723,12 +726,7 @@ def run_comparison(d1, d2):
     progress_bar.progress(50, text="Analyzing differences...")
     diffs1, diffs2, info = run_diff(text1, text2)
     
-    # Debug output
-    st.write(f"DEBUG - Doc1: {len(w_objs1)} objects, {info['diff_words1']} differences")
-    st.write(f"DEBUG - Doc2: {len(w_objs2)} objects, {info['diff_words2']} differences")
-    st.write(f"DEBUG - Sample diff indices Doc1: {sorted(list(diffs1))[:10] if diffs1 else 'None'}")
-    st.write(f"DEBUG - Sample diff indices Doc2: {sorted(list(diffs2))[:10] if diffs2 else 'None'}")
-    
+        
     # 3. Generate Previews & Downloads
     progress_bar.progress(70, text="Generating highlighted documents...")
     
@@ -800,10 +798,17 @@ st.markdown("""
         --text-muted: #475569;
         --panel: #ffffff;
         --line: #dbe7f4;
+        --h1: 2.2rem;
+        --h2: 1.35rem;
+        --h3: 1.08rem;
+        --body: 0.97rem;
+        --small: 0.84rem;
     }
 
     html, body, [class*="css"] {
-        font-family: "Inter", "Segoe UI", Arial, sans-serif;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        font-size: 16px;
+        color: var(--text-strong);
     }
 
     .stApp {
@@ -818,44 +823,65 @@ st.markdown("""
     .brand-header {
         display: flex;
         align-items: center;
-        gap: 14px;
-        padding: 10px 14px;
-        margin-bottom: 12px;
+        gap: 18px;
+        padding: 14px 18px;
+        margin-bottom: 16px;
         border: 1px solid var(--line);
-        border-radius: 14px;
+        border-radius: 16px;
         background: var(--panel);
         box-shadow: 0 8px 22px rgba(0, 94, 172, 0.08);
     }
 
     .brand-logo {
-        width: 54px;
-        height: 54px;
-        border-radius: 10px;
+        width: 96px;
+        height: 96px;
+        border-radius: 14px;
         object-fit: contain;
         border: 1px solid var(--line);
         background: #ffffff;
-        padding: 6px;
+        padding: 8px;
+        box-shadow: 0 6px 18px rgba(0, 94, 172, 0.14);
     }
 
     .brand-text h1,
     .app-title {
         color: var(--brand);
         margin: 0;
-        font-size: 1.85rem;
-        letter-spacing: 0.02em;
-        font-weight: 700;
+        font-size: var(--h1);
+        letter-spacing: 0.01em;
+        font-weight: 680;
+        line-height: 1.15;
     }
 
     .brand-text p,
     .app-subtitle {
         color: var(--text-muted);
-        margin: 2px 0 0 0;
-        font-size: 0.95rem;
+        margin: 6px 0 0 0;
+        font-size: var(--body);
+        line-height: 1.45;
+        font-weight: 450;
+    }
+
+    .control-label {
+        color: var(--brand);
+        font-size: var(--h3);
+        font-weight: 620;
+        margin: 2px 0 8px 2px;
+        letter-spacing: 0.01em;
+    }
+
+    .stMarkdown p,
+    .stCaption,
+    .stAlert {
+        font-size: var(--body);
+        line-height: 1.5;
     }
 
     .stMarkdown h3 {
         color: var(--brand);
         letter-spacing: 0.01em;
+        font-size: var(--h2);
+        font-weight: 650;
     }
 
     div[data-testid="stFileUploader"] > section {
@@ -864,19 +890,43 @@ st.markdown("""
         background: #fbfdff;
     }
 
+    div[data-testid="stFileUploader"] label {
+        font-size: var(--body);
+        font-weight: 520;
+    }
+
     div[data-testid="stFileUploader"] small {
         color: var(--text-muted);
+        font-size: var(--small);
+    }
+
+    div[data-testid="stRadio"] > div {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
     }
 
     div[data-testid="stRadio"] label {
         color: var(--text-strong);
-    }
-
-    div[data-baseweb="radio"] > div {
-        background: #ffffff;
         border: 1px solid var(--line);
         border-radius: 12px;
-        padding: 6px;
+        padding: 10px 14px;
+        background: #ffffff;
+        transition: all 0.16s ease;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }
+
+    div[data-testid="stRadio"] label:hover {
+        border-color: #87b7db;
+        background: #f7fbff;
+    }
+
+    div[data-testid="stRadio"] label:has(input:checked) {
+        border-color: var(--brand);
+        background: #edf5fe;
+        box-shadow: inset 0 0 0 1px rgba(0, 94, 172, 0.2);
     }
 
     div[data-testid="stMetric"] {
@@ -892,6 +942,20 @@ st.markdown("""
         padding: 10px;
         border-radius: 10px;
         border: 1px solid var(--line);
+    }
+
+    div[data-testid="stMetricLabel"] {
+        font-size: var(--small);
+        color: #48617a;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-size: 1.7rem;
+        font-weight: 700;
+        color: #0d3252;
     }
 
     button[kind="primary"] {
@@ -911,13 +975,8 @@ st.markdown("""
     div[data-testid="stDownloadButton"] button {
         width: 100%;
         border-radius: 10px !important;
-    }
-    
-    /* Stats metrics */
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa;
-        padding: 10px;
-        border-radius: 5px;
+        font-size: var(--body) !important;
+        font-weight: 600 !important;
     }
     
     /* Preview containers */
@@ -938,7 +997,7 @@ st.markdown("""
         padding: 10px 15px;
         border-bottom: 1px solid var(--line);
         font-weight: bold;
-        font-size: 16px;
+        font-size: 1rem;
         color: var(--brand);
         display: flex;
         justify-content: space-between;
@@ -954,9 +1013,9 @@ st.markdown("""
     }
 
     .diff-container {
-        font-family: "Inter", "Segoe UI", sans-serif;
-        font-size: 14px;
-        line-height: 1.6;
+        font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+        font-size: var(--body);
+        line-height: 1.62;
         padding: 20px;
         overflow-y: auto;
         height: 100%;
@@ -970,7 +1029,7 @@ st.markdown("""
         color: var(--brand);
         border-bottom: 2px solid #d7e7f6;
         margin-top: 10px;
-        font-size: 18px;
+        font-size: var(--h2);
     }
 
     /* CRITICAL: Highlight style */
