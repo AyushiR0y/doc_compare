@@ -217,7 +217,8 @@ def render_usage_dashboard():
         if mode_counts:
             st.markdown("**Comparison module usage**")
             fig = px.pie(names=list(mode_counts.keys()), values=list(mode_counts.values()))
-            fig.update_layout(height=200)
+            fig.update_layout(height=200, margin=dict(l=0, r=0, t=0, b=0))
+            fig.update_traces(hovertemplate='<b>%{label}</b><br>Count: %{value}<extra></extra>')
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("**Recent usage events**")
