@@ -42,7 +42,7 @@ else:
     st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
-st.markdown("<div class='control-label'>:material/tune: Comparison Mode</div>", unsafe_allow_html=True)
+st.markdown("<div class='control-label'>Comparison Mode</div>", unsafe_allow_html=True)
 
 # Radio button for comparison mode
 comparison_mode = st.radio(
@@ -805,14 +805,14 @@ st.markdown("""
         --small: 0.84rem;
     }
 
-    html, body, [class*="css"] {
-        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    html, body, .stApp, .stApp * {
+        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
         font-size: 16px;
         color: var(--text-strong);
     }
 
     .stApp {
-        background: linear-gradient(180deg, #f5f9ff 0%, #f8fbff 50%, #ffffff 100%);
+        background: linear-gradient(180deg, #fbfdff 0%, #f7fbff 55%, #f3f9ff 100%);
     }
 
     .main .block-container {
@@ -835,12 +835,12 @@ st.markdown("""
     .brand-logo {
         width: 96px;
         height: 96px;
-        border-radius: 14px;
+        border-radius: 0;
         object-fit: contain;
-        border: 1px solid var(--line);
-        background: #ffffff;
-        padding: 8px;
-        box-shadow: 0 6px 18px rgba(0, 94, 172, 0.14);
+        border: none;
+        background: transparent;
+        padding: 0;
+        box-shadow: none;
     }
 
     .brand-text h1,
@@ -865,8 +865,8 @@ st.markdown("""
     .control-label {
         color: var(--brand);
         font-size: var(--h3);
-        font-weight: 620;
-        margin: 2px 0 8px 2px;
+        font-weight: 600;
+        margin: 2px 0 6px 2px;
         letter-spacing: 0.01em;
     }
 
@@ -888,45 +888,58 @@ st.markdown("""
         border: 1px dashed #91bde0 !important;
         border-radius: 12px !important;
         background: #fbfdff;
+        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
     }
 
     div[data-testid="stFileUploader"] label {
         font-size: var(--body);
         font-weight: 520;
+        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
     }
 
     div[data-testid="stFileUploader"] small {
         color: var(--text-muted);
         font-size: var(--small);
+        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
     }
 
     div[data-testid="stRadio"] > div {
         display: flex;
-        gap: 10px;
+        gap: 14px;
         align-items: stretch;
+        background: transparent !important;
+        border: none !important;
+        padding: 0 !important;
+        box-shadow: none !important;
     }
 
     div[data-testid="stRadio"] label {
         color: var(--text-strong);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 10px 14px;
-        background: #ffffff;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        padding: 7px 10px;
+        background: transparent;
         transition: all 0.16s ease;
-        min-height: 44px;
+        min-height: 34px;
         display: flex;
         align-items: center;
     }
 
     div[data-testid="stRadio"] label:hover {
-        border-color: #87b7db;
-        background: #f7fbff;
+        border-color: #cfe2f3;
+        background: #f6fbff;
     }
 
     div[data-testid="stRadio"] label:has(input:checked) {
         border-color: var(--brand);
-        background: #edf5fe;
-        box-shadow: inset 0 0 0 1px rgba(0, 94, 172, 0.2);
+        background: #eef6ff;
+        box-shadow: none;
+    }
+
+    div[data-testid="stRadio"] p {
+        font-size: var(--body) !important;
+        font-weight: 520;
+        margin: 0;
     }
 
     div[data-testid="stMetric"] {
