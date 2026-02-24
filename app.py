@@ -16,7 +16,7 @@ from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
 # UPDATED: Sidebar expanded, layout wide
-st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Document Comparison Studio", layout="wide", initial_sidebar_state="expanded")
 
 logo_b64 = ""
 try:
@@ -31,7 +31,7 @@ if logo_b64:
         <div class="brand-header">
             <img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>
             <div class="brand-text">
-                <h1>Document Diff Checker</h1>
+                <h1>Document Comparison Studio</h1>
                 <p>Compare PDF and DOCX files with precision highlighting</p>
             </div>
         </div>
@@ -39,25 +39,11 @@ if logo_b64:
         unsafe_allow_html=True
     )
 else:
-    st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='app-title'>Document Comparison Studio</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
-st.markdown(
-    """
-    <style>
-    div[data-testid="stRadio"] > label,
-    div[data-testid="stRadio"] legend {
-        font-size: 1.4rem !important;
-        font-weight: 600 !important;
-        line-height: 1.3;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
 comparison_mode = st.radio(
-    ":material/tune: Comparison Mode",
+    "Comparison Module",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
     horizontal=True
 )
@@ -840,20 +826,22 @@ st.markdown("""
     }
 
     .brand-logo {
-        width: 54px;
-        height: 54px;
-        border-radius: 10px;
+        width: 120px;
+        height: 120px;
+        border-radius: 0;
         object-fit: contain;
-        border: 1px solid var(--line);
-        background: #ffffff;
-        padding: 6px;
+        border: none;
+        outline: none;
+        background: transparent;
+        padding: 0;
+        box-shadow: none;
     }
 
     .brand-text h1,
     .app-title {
         color: var(--brand);
         margin: 0;
-        font-size: 1.85rem;
+        font-size: 2.9rem;
         letter-spacing: 0.02em;
         font-weight: 700;
     }
@@ -878,6 +866,15 @@ st.markdown("""
 
     div[data-testid="stFileUploader"] small {
         color: var(--text-muted);
+    }
+
+    div[data-testid="stRadio"] > label,
+    div[data-testid="stRadio"] legend {
+        font-size: 1.55rem !important;
+        font-weight: 650 !important;
+        line-height: 1.2;
+        color: #0f2f4e !important;
+        margin-bottom: 6px;
     }
 
     div[data-testid="stRadio"] label {
