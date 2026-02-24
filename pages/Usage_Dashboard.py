@@ -190,11 +190,6 @@ def render_usage_dashboard():
             continue
         daily_uploads[date_key] = daily_uploads.get(date_key, 0) + int(item.get("upload_count", 0))
 
-    if daily_uploads:
-        recent_days = dict(sorted(daily_uploads.items())[-30:])
-        st.markdown("**Uploads per day (last 30 days)**")
-        st.bar_chart(recent_days)
-
     location_counts = {}
     for item in logs:
         city = item.get("client_city", "unknown")
@@ -203,6 +198,24 @@ def render_usage_dashboard():
         location_counts[label] = location_counts.get(label, 0) + 1
 
     top_locations = sorted(location_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        if daily_uploads:
+            recent_days = dict(sorted(daily_uploads.items())[-30:])
+            st.markdown("**Uploads per day (last 30 days)**")
+            st.line_chart(recent_days, height=220)
+
+    with chart_col2:
+        mode_counts = {}
+        for item in logs:
+            mode = item.get("comparison_mode", "unknown")
+            mode_counts[mode] = mode_counts.get(mode, 0) + 1
+        if mode_counts:
+            st.markdown("**Comparison module usage**")
+            st.bar_chart(mode_counts, height=220)
+
     st.markdown("**Top locations (best effort)**")
     st.dataframe(
         [{"location": name, "comparisons": count} for name, count in top_locations],

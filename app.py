@@ -860,7 +860,7 @@ st.markdown("""
 
     .module-title {
         color: #0f2f4e;
-        font-size: 1.55rem;
+        font-size: 1.3rem;
         font-weight: 400;
         line-height: 1.15;
         margin: 4px 0 6px 0;
