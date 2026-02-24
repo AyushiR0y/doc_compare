@@ -42,10 +42,13 @@ else:
     st.markdown("<h1 class='app-title'>Document Comparison Studio</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
+st.markdown("<div class='module-title'>Comparison Module</div>", unsafe_allow_html=True)
+
 comparison_mode = st.radio(
     "Comparison Module",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
-    horizontal=True
+    horizontal=True,
+    label_visibility="collapsed"
 )
 # Create two columns for file uploads
 col1, col2 = st.columns(2)
@@ -841,16 +844,26 @@ st.markdown("""
     .app-title {
         color: var(--brand);
         margin: 0;
-        font-size: 2.9rem;
+        font-size: 2.45rem;
         letter-spacing: 0.02em;
         font-weight: 700;
+        line-height: 1.05;
     }
 
     .brand-text p,
     .app-subtitle {
         color: var(--text-muted);
-        margin: 2px 0 0 0;
+        margin: -2px 0 0 0;
         font-size: 0.95rem;
+        line-height: 1.2;
+    }
+
+    .module-title {
+        color: #0f2f4e;
+        font-size: 1.75rem;
+        font-weight: 700;
+        line-height: 1.15;
+        margin: 4px 0 6px 0;
     }
 
     .stMarkdown h3 {
@@ -870,7 +883,7 @@ st.markdown("""
 
     div[data-testid="stRadio"] > label,
     div[data-testid="stRadio"] legend {
-        font-size: 1.55rem !important;
+        font-size: 1.72rem !important;
         font-weight: 650 !important;
         line-height: 1.2;
         color: #0f2f4e !important;
@@ -879,6 +892,11 @@ st.markdown("""
 
     div[data-testid="stRadio"] label {
         color: var(--text-strong);
+    }
+
+    div[data-testid="stRadio"] p {
+        font-size: 1.03rem !important;
+        font-weight: 520;
     }
 
     div[data-baseweb="radio"] > div {
