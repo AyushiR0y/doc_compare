@@ -214,14 +214,7 @@ def render_usage_dashboard():
             mode_counts[mode] = mode_counts.get(mode, 0) + 1
         if mode_counts:
             st.markdown("**Comparison module usage**")
-            st.bar_chart(mode_counts, height=220)
-
-    st.markdown("**Top locations (best effort)**")
-    st.dataframe(
-        [{"location": name, "comparisons": count} for name, count in top_locations],
-        use_container_width=True,
-        hide_index=True,
-    )
+            st.pie_chart(mode_counts)
 
     st.markdown("**Recent usage events**")
     st.dataframe(
