@@ -214,7 +214,8 @@ def render_usage_dashboard():
             mode_counts[mode] = mode_counts.get(mode, 0) + 1
         if mode_counts:
             st.markdown("**Comparison module usage**")
-            st.pie_chart(mode_counts)
+            import pandas as pd
+            st.pie_chart(pd.Series(mode_counts))
 
     st.markdown("**Recent usage events**")
     st.dataframe(
