@@ -45,9 +45,11 @@ else:
 st.markdown(
     """
     <style>
-    div[data-testid="stRadio"] > label {
-        font-size: 1.1rem !important;
-        font-weight: 600;
+    div[data-testid="stRadio"] > label,
+    div[data-testid="stRadio"] legend {
+        font-size: 1.4rem !important;
+        font-weight: 600 !important;
+        line-height: 1.3;
     }
     </style>
     """,
