@@ -15,8 +15,8 @@ from functools import lru_cache
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
 
-# UPDATED: Sidebar collapsed, layout wide
-st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="collapsed")
+# UPDATED: Sidebar expanded, layout wide
+st.set_page_config(page_title="Document Diff Checker", layout="wide", initial_sidebar_state="expanded")
 
 st.title("📄 Document Diff Checker")
 st.markdown("Upload two documents (PDF or Word) to compare and highlight their differences")
