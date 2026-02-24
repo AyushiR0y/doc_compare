@@ -42,28 +42,25 @@ else:
     st.markdown("<h1 class='app-title'>Document Diff Checker</h1>", unsafe_allow_html=True)
     st.markdown("<p class='app-subtitle'>Compare PDF and DOCX files with precision highlighting</p>", unsafe_allow_html=True)
 
-st.markdown("<div class='control-label'>Comparison Mode</div>", unsafe_allow_html=True)
-
 # Radio button for comparison mode
 comparison_mode = st.radio(
-    "Comparison Mode",
+    "Comparison mode",
     ["Same Format (PDF vs PDF or Word vs Word)", "Mixed Format (PDF vs Word)"],
-    horizontal=True,
-    label_visibility="collapsed"
+    horizontal=True
 )
 
 # Create two columns for file uploads
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader(":material/description: Document 1")
+    st.subheader("Document 1")
     if comparison_mode == "Same Format (PDF vs PDF or Word vs Word)":
         doc1_file = st.file_uploader("Select first document", type=['pdf', 'docx'], key="doc1")
     else:
         doc1_file = st.file_uploader("Select first document (PDF or Word)", type=['pdf', 'docx'], key="doc1_mixed")
     
 with col2:
-    st.subheader(":material/description: Document 2")
+    st.subheader("Document 2")
     if comparison_mode == "Same Format (PDF vs PDF or Word vs Word)":
         doc2_file = st.file_uploader("Select second document (same format as Document 1)", type=['pdf', 'docx'], key="doc2")
     else:
@@ -791,6 +788,8 @@ def run_comparison(d1, d2):
 # CSS - FROM CODE 1 (Original highlight styling) + improvements
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+
     :root {
         --brand: #005eac;
         --brand-soft: #e8f2fb;
@@ -798,15 +797,15 @@ st.markdown("""
         --text-muted: #475569;
         --panel: #ffffff;
         --line: #dbe7f4;
-        --h1: 2.2rem;
-        --h2: 1.35rem;
-        --h3: 1.08rem;
-        --body: 0.97rem;
-        --small: 0.84rem;
+        --h1: 2.9rem;
+        --h2: 1.85rem;
+        --h3: 1.35rem;
+        --body: 1.03rem;
+        --small: 0.9rem;
     }
 
     html, body, .stApp, .stApp * {
-        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
         font-size: 16px;
         color: var(--text-strong);
     }
@@ -824,17 +823,17 @@ st.markdown("""
         display: flex;
         align-items: center;
         gap: 18px;
-        padding: 14px 18px;
+        padding: 18px 18px;
         margin-bottom: 16px;
         border: 1px solid var(--line);
         border-radius: 16px;
         background: var(--panel);
-        box-shadow: 0 8px 22px rgba(0, 94, 172, 0.08);
+        box-shadow: 0 4px 10px rgba(0, 94, 172, 0.05);
     }
 
     .brand-logo {
-        width: 96px;
-        height: 96px;
+        width: 128px;
+        height: 128px;
         border-radius: 0;
         object-fit: contain;
         border: none;
@@ -849,8 +848,8 @@ st.markdown("""
         margin: 0;
         font-size: var(--h1);
         letter-spacing: 0.01em;
-        font-weight: 680;
-        line-height: 1.15;
+        font-weight: 700;
+        line-height: 1.08;
     }
 
     .brand-text p,
@@ -859,15 +858,7 @@ st.markdown("""
         margin: 6px 0 0 0;
         font-size: var(--body);
         line-height: 1.45;
-        font-weight: 450;
-    }
-
-    .control-label {
-        color: var(--brand);
-        font-size: var(--h3);
-        font-weight: 600;
-        margin: 2px 0 6px 2px;
-        letter-spacing: 0.01em;
+        font-weight: 500;
     }
 
     .stMarkdown p,
@@ -881,31 +872,48 @@ st.markdown("""
         color: var(--brand);
         letter-spacing: 0.01em;
         font-size: var(--h2);
-        font-weight: 650;
+        font-weight: 700;
+        line-height: 1.25;
+        margin-top: 0.8rem;
+        margin-bottom: 0.6rem;
+    }
+
+    [data-testid="stSubheader"] {
+        font-size: var(--h3) !important;
+        font-weight: 650 !important;
+        letter-spacing: 0.01em;
+        color: #143a5f;
     }
 
     div[data-testid="stFileUploader"] > section {
         border: 1px dashed #91bde0 !important;
         border-radius: 12px !important;
         background: #fbfdff;
-        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
+        font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
     }
 
     div[data-testid="stFileUploader"] label {
         font-size: var(--body);
         font-weight: 520;
-        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
+        font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
     }
 
     div[data-testid="stFileUploader"] small {
         color: var(--text-muted);
         font-size: var(--small);
-        font-family: "Aptos", "Calibri", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
+        font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif !important;
+    }
+
+    div[data-testid="stRadio"] legend {
+        font-size: var(--h3) !important;
+        color: #143a5f !important;
+        font-weight: 650 !important;
+        margin-bottom: 4px;
     }
 
     div[data-testid="stRadio"] > div {
         display: flex;
-        gap: 14px;
+        gap: 12px;
         align-items: stretch;
         background: transparent !important;
         border: none !important;
@@ -915,25 +923,25 @@ st.markdown("""
 
     div[data-testid="stRadio"] label {
         color: var(--text-strong);
-        border: 1px solid transparent;
+        border: 1px solid #d7e5f3;
         border-radius: 10px;
-        padding: 7px 10px;
-        background: transparent;
+        padding: 8px 12px;
+        background: #ffffff;
         transition: all 0.16s ease;
-        min-height: 34px;
+        min-height: 38px;
         display: flex;
         align-items: center;
     }
 
     div[data-testid="stRadio"] label:hover {
-        border-color: #cfe2f3;
-        background: #f6fbff;
+        border-color: #b8d2e8;
+        background: #f8fcff;
     }
 
     div[data-testid="stRadio"] label:has(input:checked) {
         border-color: var(--brand);
         background: #eef6ff;
-        box-shadow: none;
+        box-shadow: inset 0 0 0 1px rgba(0, 94, 172, 0.18);
     }
 
     div[data-testid="stRadio"] p {
@@ -1026,7 +1034,7 @@ st.markdown("""
     }
 
     .diff-container {
-        font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+        font-family: "Manrope", "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
         font-size: var(--body);
         line-height: 1.62;
         padding: 20px;
@@ -1041,8 +1049,9 @@ st.markdown("""
     .diff-container h3 {
         color: var(--brand);
         border-bottom: 2px solid #d7e7f6;
-        margin-top: 10px;
+        margin-top: 14px;
         font-size: var(--h2);
+        font-weight: 700;
     }
 
     /* CRITICAL: Highlight style */
@@ -1116,7 +1125,7 @@ if doc1_file and doc2_file:
 
     if st.session_state.results:
         r = st.session_state.results
-        st.success(":material/task_alt: Comparison complete")
+        st.success("Comparison complete")
         i = r['info']
         
         # Stats
@@ -1129,12 +1138,12 @@ if doc1_file and doc2_file:
         st.markdown("---")
         
         # Downloads - FROM CODE 2 (Use original filenames with "highlighted_" prefix)
-        st.markdown("### :material/download: Download Highlighted Documents")
+        st.markdown("### Download Highlighted Documents")
         dl_c1, dl_c2 = st.columns(2)
         
         with dl_c1:
             st.download_button(
-                ":material/file_download: Download Document 1", 
+                "Download Document 1", 
                 r['d1_bytes'].getvalue(), 
                 file_name=f"highlighted_{r['doc1_name']}.{r['ext1']}", 
                 mime="application/pdf" if r['ext1']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1142,14 +1151,14 @@ if doc1_file and doc2_file:
             )
         with dl_c2:
             st.download_button(
-                ":material/file_download: Download Document 2", 
+                "Download Document 2", 
                 r['d2_bytes'].getvalue(), 
                 file_name=f"highlighted_{r['doc2_name']}.{r['ext2']}", 
                 mime="application/pdf" if r['ext2']=='pdf' else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="dl2"
             )
             
-        st.markdown("### :material/preview: Document Preview")
+        st.markdown("### Document Preview")
         
         # Preview Columns
         c1, c2 = st.columns(2)
@@ -1159,7 +1168,7 @@ if doc1_file and doc2_file:
                 if p_type == 'pdf_images':
                     # Show PDF as rendered images using Streamlit's native image display
                     st.markdown(f"#### {display_name}")
-                    st.caption(f":material/article: {len(p_data)} pages with highlighted differences")
+                    st.caption(f"{len(p_data)} pages with highlighted differences")
                     
                     # Create a scrollable container
                     with st.container(height=700):
@@ -1184,4 +1193,4 @@ if doc1_file and doc2_file:
         show_preview(c2, r['doc2_display'], r['p2_type'], r['p2_data'])
 
 else:
-    st.info(":material/upload_file: Upload both documents to begin comparison")
+    st.info("Upload both documents to begin comparison")
