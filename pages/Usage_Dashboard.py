@@ -135,6 +135,10 @@ def _get_dashboard_password():
 
 
 def _usage_log_path():
+    configured_path = os.getenv("USAGE_LOG_FILE_PATH")
+    if configured_path:
+        return Path(configured_path).expanduser().resolve()
+
     project_root = Path(__file__).resolve().parent.parent
     return project_root / "usage_logs.jsonl"
 
@@ -162,6 +166,30 @@ def load_usage_logs():
     return records
 
 
+def format_indian_number(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    negative = number < 0
+    digits = str(abs(number))
+    if len(digits) <= 3:
+        formatted = digits
+    else:
+        last_three = digits[-3:]
+        leading = digits[:-3]
+        groups = []
+        while len(leading) > 2:
+            groups.insert(0, leading[-2:])
+            leading = leading[:-2]
+        if leading:
+            groups.insert(0, leading)
+        formatted = ",".join(groups + [last_three])
+
+    return f"-{formatted}" if negative else formatted
+
+
 def render_usage_dashboard():
     logs = load_usage_logs()
     if not logs:
@@ -180,9 +208,9 @@ def render_usage_dashboard():
     last_seen = logs[0].get("timestamp_utc", "-")
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Comparisons", total_events)
-    m2.metric("Total Uploads", total_uploads)
-    m3.metric("Unique IPs", unique_ips)
+    m1.metric("Total Comparisons", format_indian_number(total_events))
+    m2.metric("Total Uploads", format_indian_number(total_uploads))
+    m3.metric("Unique IPs", format_indian_number(unique_ips))
     m4.metric("Last Activity (UTC)", last_seen.replace("T", " ")[:19] if last_seen != "-" else "-")
 
     daily_uploads = {}
@@ -218,7 +246,7 @@ def render_usage_dashboard():
             st.markdown("**Comparison module usage**")
             fig = px.pie(names=list(mode_counts.keys()), values=list(mode_counts.values()))
             fig.update_layout(height=200, margin=dict(l=0, r=0, t=0, b=0))
-            fig.update_traces(hovertemplate='<b>%{label}</b><br>Count: %{value}<extra></extra>')
+            fig.update_traces(hovertemplate='<b>%{label}</b><br>Count: %{customdata}<extra></extra>', customdata=[format_indian_number(v) for v in mode_counts.values()])
             st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("**Recent usage events**")

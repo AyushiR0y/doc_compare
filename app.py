@@ -7,6 +7,7 @@ import re
 import os
 import tempfile
 import base64
+from pathlib import Path
 from PIL import Image
 import json
 import uuid
@@ -71,7 +72,38 @@ with col2:
 # UTILITY FUNCTIONS
 # ============================================================================
 
-USAGE_LOG_FILE = "usage_logs.jsonl"
+def _usage_log_path():
+    configured_path = os.getenv("USAGE_LOG_FILE_PATH")
+    if configured_path:
+        return Path(configured_path).expanduser().resolve()
+    return Path(__file__).resolve().parent / "usage_logs.jsonl"
+
+
+USAGE_LOG_FILE = _usage_log_path()
+
+
+def format_indian_number(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+    negative = number < 0
+    digits = str(abs(number))
+    if len(digits) <= 3:
+        formatted = digits
+    else:
+        last_three = digits[-3:]
+        leading = digits[:-3]
+        groups = []
+        while len(leading) > 2:
+            groups.insert(0, leading[-2:])
+            leading = leading[:-2]
+        if leading:
+            groups.insert(0, leading)
+        formatted = ",".join(groups + [last_three])
+
+    return f"-{formatted}" if negative else formatted
 
 
 def _safe_get_headers():
@@ -157,6 +189,7 @@ def log_usage_event(doc1_name, doc2_name, ext1, ext2, comparison_mode):
     }
 
     try:
+        USAGE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(USAGE_LOG_FILE, "a", encoding="utf-8") as file:
             file.write(json.dumps(event, ensure_ascii=False) + "\n")
     except OSError:
@@ -724,11 +757,6 @@ def run_comparison(d1, d2):
     progress_bar.progress(50, text="Analyzing differences...")
     diffs1, diffs2, info = run_diff(text1, text2)
     
-    # Debug output
-    st.write(f"DEBUG - Doc1: {len(w_objs1)} objects, {info['diff_words1']} differences")
-    st.write(f"DEBUG - Doc2: {len(w_objs2)} objects, {info['diff_words2']} differences")
-    st.write(f"DEBUG - Sample diff indices Doc1: {sorted(list(diffs1))[:10] if diffs1 else 'None'}")
-    st.write(f"DEBUG - Sample diff indices Doc2: {sorted(list(diffs2))[:10] if diffs2 else 'None'}")
     
     # 3. Generate Previews & Downloads
     progress_bar.progress(70, text="Generating highlighted documents...")
@@ -1076,8 +1104,8 @@ if doc1_file and doc2_file:
         
         # Stats
         col_s1, col_s2, col_s3 = st.columns(3)
-        col_s1.metric("Total Words (Doc 1)", i['total_words1'])
-        col_s2.metric("Total Words (Doc 2)", i['total_words2'])
+        col_s1.metric("Total Words (Doc 1)", format_indian_number(i['total_words1']))
+        col_s2.metric("Total Words (Doc 2)", format_indian_number(i['total_words2']))
         match_pct = (i['total_matching'] / max(i['total_words1'], i['total_words2'])) * 100
         col_s3.metric("Match Rate", f"{match_pct:.1f}%")
         
@@ -1114,14 +1142,14 @@ if doc1_file and doc2_file:
                 if p_type == 'pdf_images':
                     # Show PDF as rendered images using Streamlit's native image display
                     st.markdown(f"#### {display_name}")
-                    st.caption(f":material/article: {len(p_data)} pages with highlighted differences")
+                    st.caption(f":material/article: {format_indian_number(len(p_data))} pages with highlighted differences")
                     
                     # Create a scrollable container
                     with st.container(height=700):
                         for page_info in p_data:
                             st.image(
                                 page_info['image'],  # Direct PIL Image object
-                                caption=f"Page {page_info['page_num']}",
+                                caption=f"Page {format_indian_number(page_info['page_num'])}",
                                 use_container_width=True
                             )
                             
