@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from urllib import request as urllib_request
 from urllib.error import URLError, HTTPError
+from usage_storage import get_usage_log_path
 
 # UPDATED: Sidebar expanded, layout wide
 st.set_page_config(page_title="Document Comparison Studio", layout="wide", initial_sidebar_state="expanded")
@@ -72,14 +73,7 @@ with col2:
 # UTILITY FUNCTIONS
 # ============================================================================
 
-def _usage_log_path():
-    configured_path = os.getenv("USAGE_LOG_FILE_PATH")
-    if configured_path:
-        return Path(configured_path).expanduser().resolve()
-    return Path(__file__).resolve().parent / "usage_logs.jsonl"
-
-
-USAGE_LOG_FILE = _usage_log_path()
+USAGE_LOG_FILE = get_usage_log_path(__file__)
 
 
 def format_indian_number(value):

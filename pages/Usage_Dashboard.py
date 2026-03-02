@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from usage_storage import get_usage_log_path
 
 st.set_page_config(page_title="Usage Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -134,17 +135,8 @@ def _get_dashboard_password():
     return str(env_password) if env_password else None
 
 
-def _usage_log_path():
-    configured_path = os.getenv("USAGE_LOG_FILE_PATH")
-    if configured_path:
-        return Path(configured_path).expanduser().resolve()
-
-    project_root = Path(__file__).resolve().parent.parent
-    return project_root / "usage_logs.jsonl"
-
-
 def load_usage_logs():
-    log_file = _usage_log_path()
+    log_file = get_usage_log_path(Path(__file__).resolve().parent.parent / "app.py")
     if not log_file.exists():
         return []
 
