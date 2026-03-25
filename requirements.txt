@@ -4,3 +4,6 @@ python-docx
 pandas
 plotly
 Pillow
+fastapi
+uvicorn[standard]
+python-multipart
