@@ -29,33 +29,21 @@ app.add_middleware(
 
 USAGE_LOG_FILE = get_usage_log_path(__file__)
 
-# Serve frontend static files when the built frontend exists (used in production deployments)
+# Determine frontend dist path
 frontend_dist = Path(__file__).parent / "frontend" / "dist"
-if frontend_dist.exists():
-    app.mount("/static", StaticFiles(directory=str(frontend_dist / "static")), name="static")
-    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "static")), name="assets")
 
-# Always provide a root handler that serves the built frontend index.html when available.
+# Mount static files from the dist directory
+if frontend_dist.exists() and (frontend_dist / "static").exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dist / "static")), name="static")
+
+# Serve the frontend index.html at the root
 @app.get("/", include_in_schema=False)
 async def root_index():
-    # List of candidate index locations to support different build outputs
-    candidates = [
-        frontend_dist / "index.html",
-        Path(__file__).parent / "frontend" / "dist" / "index.html",
-        Path(__file__).parent / "frontend" / "build" / "index.html",
-        Path(__file__).parent / "dist" / "index.html",
-    ]
-    for index_path in candidates:
-        try:
-            if index_path.exists():
-                # mount assets for the parent directory if not already mounted
-                parent_dir = index_path.parent
-                if not any(getattr(m, 'name', None) == 'assets' for m in app.router.routes):
-                    app.mount("/assets", StaticFiles(directory=str(parent_dir / "static")), name="assets")
-                return FileResponse(index_path)
-        except Exception:
-            continue
-
+    index_path = frontend_dist / "index.html"
+    
+    if index_path.exists():
+        return FileResponse(index_path)
+    
     # Fallback: simple HTML indicating API is running
     return JSONResponse({"status": "ok", "service": "document-comparison-api", "note": "Frontend not found on server."})
 
