@@ -1,16 +1,13 @@
 from __future__ import annotations
-
 import json
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
-
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-
 from comparison_core import ALLOWED_EXTENSIONS, compare_documents, compare_documents_with_preview
 from usage_storage import get_usage_log_path
 

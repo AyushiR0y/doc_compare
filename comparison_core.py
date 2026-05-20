@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import difflib
+import string
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -12,13 +13,11 @@ from PIL import Image, ImageDraw
 
 
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
+_PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
 
 
 def _normalize_word(word: str) -> str:
-    import string
-
-    translator = str.maketrans("", "", string.punctuation)
-    return word.translate(translator).lower().strip()
+    return word.translate(_PUNCT_TRANSLATOR).lower().strip()
 
 
 def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any]], Document]:
@@ -38,7 +37,6 @@ def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any
 
         is_heading_para = para.style.name.startswith("Heading") if para.style else False
         tokens = para.text.split()
-
         for token in tokens:
             if not token.strip():
                 continue
@@ -67,6 +65,22 @@ def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any
 
         word_objects.append({"type": "newline", "text": "\n"})
 
+    def add_inline_images(run, paragraph_is_table: bool) -> None:
+        image_rel_ids = run._element.xpath('.//a:blip/@r:embed')
+        for rel_id in image_rel_ids:
+            image_part = doc.part.related_parts.get(rel_id)
+            if not image_part:
+                continue
+
+            word_objects.append(
+                {
+                    "type": "image",
+                    "src": base64.b64encode(image_part.blob).decode("utf-8"),
+                    "content_type": image_part.content_type,
+                    "in_table": paragraph_is_table,
+                }
+            )
+
     def process_table(table: Table) -> None:
         word_objects.append({"type": "table_start", "text": ""})
 
@@ -90,6 +104,10 @@ def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any
                         )
                         text_segments.append(token)
 
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        add_inline_images(run, True)
+
                 if cell_idx < len(row.cells) - 1:
                     word_objects.append({"type": "separator", "text": "|"})
 
@@ -100,7 +118,10 @@ def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any
 
     for element in doc.element.body:
         if isinstance(element, CT_P):
-            process_paragraph(Paragraph(element, doc))
+            para = Paragraph(element, doc)
+            process_paragraph(para)
+            for run in para.runs:
+                add_inline_images(run, False)
         elif isinstance(element, CT_Tbl):
             process_table(Table(element, doc))
 
@@ -170,8 +191,22 @@ def _run_diff(text1: str, text2: str) -> tuple[set[int], set[int], dict[str, int
     words1 = text1.split()
     words2 = text2.split()
 
-    norm_words1 = [_normalize_word(w) for w in words1 if _normalize_word(w)]
-    norm_words2 = [_normalize_word(w) for w in words2 if _normalize_word(w)]
+    norm_words1: list[str] = []
+    norm_words2: list[str] = []
+    norm_to_orig_idx1: list[int] = []
+    norm_to_orig_idx2: list[int] = []
+
+    for orig_idx, word in enumerate(words1):
+        normalized = _normalize_word(word)
+        if normalized:
+            norm_words1.append(normalized)
+            norm_to_orig_idx1.append(orig_idx)
+
+    for orig_idx, word in enumerate(words2):
+        normalized = _normalize_word(word)
+        if normalized:
+            norm_words2.append(normalized)
+            norm_to_orig_idx2.append(orig_idx)
 
     matcher = difflib.SequenceMatcher(None, norm_words1, norm_words2, autojunk=False)
     opcodes = matcher.get_opcodes()
@@ -179,25 +214,17 @@ def _run_diff(text1: str, text2: str) -> tuple[set[int], set[int], dict[str, int
     diff_indices1: set[int] = set()
     diff_indices2: set[int] = set()
 
-    orig_idx1 = 0
-    norm_idx1 = 0
-    for w in words1:
-        if _normalize_word(w):
-            for tag, i1, i2, _, _ in opcodes:
-                if tag in {"replace", "delete"} and i1 <= norm_idx1 < i2:
-                    diff_indices1.add(orig_idx1)
-            norm_idx1 += 1
-        orig_idx1 += 1
+    # Work in normalized-index space first, then map back to original token indices.
+    diff_norm_indices1: set[int] = set()
+    diff_norm_indices2: set[int] = set()
+    for tag, i1, i2, j1, j2 in opcodes:
+        if tag in {"replace", "delete"}:
+            diff_norm_indices1.update(range(i1, i2))
+        if tag in {"replace", "insert"}:
+            diff_norm_indices2.update(range(j1, j2))
 
-    orig_idx2 = 0
-    norm_idx2 = 0
-    for w in words2:
-        if _normalize_word(w):
-            for tag, _, _, j1, j2 in opcodes:
-                if tag in {"replace", "insert"} and j1 <= norm_idx2 < j2:
-                    diff_indices2.add(orig_idx2)
-            norm_idx2 += 1
-        orig_idx2 += 1
+    diff_indices1.update(norm_to_orig_idx1[idx] for idx in diff_norm_indices1)
+    diff_indices2.update(norm_to_orig_idx2[idx] for idx in diff_norm_indices2)
 
     total_matching = sum(i2 - i1 for tag, i1, i2, _, _ in opcodes if tag == "equal")
     info = {
@@ -214,18 +241,19 @@ def _run_diff(text1: str, text2: str) -> tuple[set[int], set[int], dict[str, int
 def _highlight_pdf_words(doc: fitz.Document, word_data: list[dict[str, Any]], diff_indices: set[int]) -> BytesIO:
     highlighted_doc = fitz.open()
     try:
+        page_to_words: dict[int, list[dict[str, Any]]] = {}
+        for word_idx in diff_indices:
+            if word_idx >= len(word_data):
+                continue
+            word_info = word_data[word_idx]
+            page_to_words.setdefault(word_info["page"], []).append(word_info)
+
         for page_num in range(len(doc)):
             page = doc[page_num]
             new_page = highlighted_doc.new_page(width=page.rect.width, height=page.rect.height)
             new_page.show_pdf_page(new_page.rect, doc, page_num)
 
-            for word_idx in diff_indices:
-                if word_idx >= len(word_data):
-                    continue
-
-                word_info = word_data[word_idx]
-                if word_info["page"] != page_num:
-                    continue
+            for word_info in page_to_words.get(page_num, []):
 
                 bbox = word_info["bbox"]
                 rect = fitz.Rect(bbox[0], bbox[1], bbox[2], bbox[3])
@@ -313,57 +341,135 @@ def _highlight_word_doc(doc: Document, word_objects: list[dict[str, Any]], diff_
     return output
 
 
-def _create_html_preview(word_objects: list[dict[str, Any]], diff_indices: set[int]) -> str:
-    html_parts: list[str] = []
-    html_parts.append('<div style="padding: 20px; line-height: 1.8;">')
+def _create_html_preview(word_objects: list[dict[str, Any]], diff_indices: set[int]) -> tuple[str, int]:
+    import html
 
+    # Split word-based HTML into page-like blocks for clearer page-wise preview.
+    WORDS_PER_PAGE = 350
+
+    pages: list[str] = []
+    current_parts: list[str] = []
+    paragraph_tokens: list[str] = []
+    paragraph_is_heading = False
     text_idx = 0
     in_table = False
+    words_in_current_page = 0
+
+    def flush_paragraph() -> None:
+        nonlocal words_in_current_page
+        nonlocal paragraph_is_heading
+        if paragraph_tokens:
+            if paragraph_is_heading:
+                current_parts.append('<h3 class="word-preview-heading">')
+                current_parts.append(" ".join(paragraph_tokens))
+                current_parts.append('</h3>')
+            else:
+                current_parts.append('<p class="word-preview-paragraph">')
+                current_parts.append(" ".join(paragraph_tokens))
+                current_parts.append('</p>')
+            paragraph_tokens.clear()
+            paragraph_is_heading = False
+
+    def flush_table_end():
+        current_parts.append('</td></tr></tbody></table></div>')
+
+    def start_new_page_if_needed():
+        nonlocal words_in_current_page, current_parts
+        if words_in_current_page >= WORDS_PER_PAGE:
+            # finish current page
+            page_number = len(pages) + 1
+            page_html = (
+                f'<div class="word-preview-page preview-page" data-page="{page_number}">'
+                '<div class="word-preview-sheet">'
+                + ''.join(current_parts)
+                + '</div></div>'
+            )
+            pages.append(page_html)
+            # reset
+            current_parts = []
+            words_in_current_page = 0
 
     for obj in word_objects:
         if obj["type"] == "table_start":
-            html_parts.append('<div style="margin: 15px 0; overflow-x: auto;">')
-            html_parts.append('<table style="width: 100%; border-collapse: collapse; border: 1px solid #ddd;"><tr>')
+            flush_paragraph()
+            current_parts.append('<div class="word-preview-table-wrap">')
+            current_parts.append('<table class="word-preview-table"><tbody><tr><td class="word-preview-cell">')
             in_table = True
-            html_parts.append('<td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
 
         elif obj["type"] == "table_end":
-            html_parts.append("</td></tr></table></div>")
+            flush_paragraph()
+            flush_table_end()
             in_table = False
 
         elif obj["type"] == "word":
-            import html
+            token_classes = ["word-preview-token"]
+            if obj.get("is_heading"):
+                token_classes.append("is-heading")
+                # mark paragraph as a heading when the first word of the paragraph is a heading
+                if not paragraph_tokens and not in_table:
+                    paragraph_is_heading = True
+            if obj.get("is_bold"):
+                token_classes.append("is-bold")
+            if obj.get("is_italic"):
+                token_classes.append("is-italic")
 
             escaped_text = html.escape(obj["text"])
-            token_html = escaped_text
+            class_name = " ".join(token_classes)
+            token_html = f'<span class="{class_name}">{escaped_text}</span>'
             if text_idx in diff_indices:
-                token_html = f'<span style="background:#fff3a3; padding:2px 4px; border-radius:2px; font-weight:700;">{escaped_text}</span>'
+                token_html = f'<span class="word-highlight">{token_html}</span>'
 
-            if obj.get("is_heading"):
-                token_html = f'<span style="font-size:1.2em; font-weight:700; color:#2c3e50;">{token_html}</span>'
-            if obj.get("is_bold"):
-                token_html = f"<strong>{token_html}</strong>"
-            if obj.get("is_italic"):
-                token_html = f"<em>{token_html}</em>"
+            if in_table:
+                current_parts.append(token_html)
+                current_parts.append(' ')
+            else:
+                paragraph_tokens.append(token_html)
 
-            html_parts.append(token_html)
-            html_parts.append(" ")
             text_idx += 1
+            words_in_current_page += 1
+            start_new_page_if_needed()
+
+        elif obj["type"] == "image":
+            image_html = (
+                '<div class="word-preview-image-block">'
+                f'<img class="word-preview-inline-image" src="data:{obj.get("content_type", "image/png")};base64,{obj["src"]}" alt="Embedded document image" />'
+                '</div>'
+            )
+            if in_table:
+                current_parts.append(image_html)
+            else:
+                flush_paragraph()
+                current_parts.append(image_html)
 
         elif obj["type"] == "row_end":
             if in_table:
-                html_parts.append('</td></tr><tr><td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
+                current_parts.append('</td></tr><tr><td class="word-preview-cell">')
 
         elif obj["type"] == "separator":
             if in_table:
-                html_parts.append('</td><td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;">')
+                current_parts.append('</td><td class="word-preview-cell">')
 
         elif obj["type"] == "newline":
             if not in_table:
-                html_parts.append("<br><br>")
+                flush_paragraph()
 
-    html_parts.append("</div>")
-    return "".join(html_parts)
+    # finalize
+    flush_paragraph()
+    if current_parts:
+        page_number = len(pages) + 1
+        page_html = (
+            f'<div class="word-preview-page preview-page" data-page="{page_number}">'
+            '<div class="word-preview-sheet">'
+            + ''.join(current_parts)
+            + '</div></div>'
+        )
+        pages.append(page_html)
+
+    # If no pages produced (empty doc), return an empty sheet
+    if not pages:
+        return '<div class="word-preview-page preview-page" data-page="1"><div class="word-preview-sheet"></div></div>', 1
+
+    return ''.join(pages), len(pages)
 
 
 def _render_pdf_preview_base64(
@@ -376,18 +482,20 @@ def _render_pdf_preview_base64(
     previews: list[dict[str, Any]] = []
     total_pages = len(doc) if max_pages <= 0 else min(max_pages, len(doc))
 
+    page_to_words: dict[int, list[dict[str, Any]]] = {}
+    for idx in diff_indices:
+        if idx >= len(word_data):
+            continue
+        word_info = word_data[idx]
+        page_to_words.setdefault(word_info["page"], []).append(word_info)
+
     for page_num in range(total_pages):
         page = doc[page_num]
         pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
         image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         draw = ImageDraw.Draw(image, "RGBA")
 
-        for idx in diff_indices:
-            if idx >= len(word_data):
-                continue
-            word_info = word_data[idx]
-            if word_info["page"] != page_num:
-                continue
+        for word_info in page_to_words.get(page_num, []):
 
             x0, y0, x1, y1 = word_info["bbox"]
             x0, y0, x1, y1 = x0 * 2, y0 * 2, x1 * 2, y1 * 2
@@ -401,6 +509,9 @@ def _render_pdf_preview_base64(
             encoded = base64.b64encode(output.getvalue()).decode("utf-8")
             page_payload["image_base64"] = encoded
             page_payload["mime_type"] = "image/jpeg"
+        # include original image dimensions so the frontend can size and align pages
+        page_payload["width_px"] = pix.width
+        page_payload["height_px"] = pix.height
 
         previews.append(page_payload)
 
@@ -479,6 +590,7 @@ def compare_documents(doc1_name: str, doc1_bytes: bytes, doc2_name: str, doc2_by
         "doc2_ext": ext2,
         "summary": {
             **info,
+            "highlighted_changes": len(diff1) + len(diff2),
             "match_rate": round((info["total_matching"] / max(info["total_words1"], info["total_words2"])) * 100, 2)
             if max(info["total_words1"], info["total_words2"]) > 0
             else 0,
@@ -542,13 +654,16 @@ def compare_documents_with_preview(
                     include_images=include_images,
                 ),
                 "images_included": include_images,
+                "page_count": len(pdf_doc1),
                 "truncated": len(pdf_doc1) > doc1_page_limit,
                 "total_pages": len(pdf_doc1),
             }
         else:
+            html_preview1, page_count1 = _create_html_preview(word_objs1, diff1)
             preview1 = {
                 "type": "html",
-                "html": _create_html_preview(word_objs1, diff1),
+                "html": html_preview1,
+                "page_count": page_count1,
                 "truncated": False,
                 "total_pages": None,
             }
@@ -565,13 +680,16 @@ def compare_documents_with_preview(
                     include_images=include_images,
                 ),
                 "images_included": include_images,
+                "page_count": len(pdf_doc2),
                 "truncated": len(pdf_doc2) > doc2_page_limit,
                 "total_pages": len(pdf_doc2),
             }
         else:
+            html_preview2, page_count2 = _create_html_preview(word_objs2, diff2)
             preview2 = {
                 "type": "html",
-                "html": _create_html_preview(word_objs2, diff2),
+                "html": html_preview2,
+                "page_count": page_count2,
                 "truncated": False,
                 "total_pages": None,
             }
@@ -584,6 +702,7 @@ def compare_documents_with_preview(
     return {
         "summary": {
             **info,
+            "highlighted_changes": len(diff1) + len(diff2),
             "match_rate": round((info["total_matching"] / max(info["total_words1"], info["total_words2"])) * 100, 2)
             if max(info["total_words1"], info["total_words2"]) > 0
             else 0,
