@@ -48,6 +48,32 @@ async def root_index():
     return JSONResponse({"status": "ok", "service": "document-comparison-api", "note": "Frontend not found on server."})
 
 
+@app.get("/_debug/frontend_status", include_in_schema=False)
+async def frontend_status():
+    """Debug endpoint: reports presence of built frontend files and a file listing."""
+    info = {
+        "frontend_dist": str(frontend_dist),
+        "frontend_dist_exists": frontend_dist.exists(),
+        "index_exists": (frontend_dist / "index.html").exists(),
+        "static_exists": (frontend_dist / "static").exists(),
+    }
+
+    files = []
+    if frontend_dist.exists():
+        try:
+            for p in sorted(frontend_dist.rglob("*")):
+                try:
+                    rel = p.relative_to(frontend_dist)
+                except Exception:
+                    rel = p
+                files.append(str(rel))
+        except Exception:
+            files = ["(error listing files)"]
+
+    info["files"] = files
+    return JSONResponse(info)
+
+
 def _extract_client_ip(request: Request) -> str:
     for key in ["x-forwarded-for", "x-real-ip", "cf-connecting-ip", "x-client-ip"]:
         value = request.headers.get(key)
