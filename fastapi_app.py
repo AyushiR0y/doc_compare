@@ -34,12 +34,29 @@ frontend_dist = Path(__file__).parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dist)), name="static")
 
-    @app.get("/", include_in_schema=False)
-    async def root_index():
-        index_path = frontend_dist / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
-        return JSONResponse({"status": "ok", "service": "document-comparison-api"})
+# Always provide a root handler that serves the built frontend index.html when available.
+@app.get("/", include_in_schema=False)
+async def root_index():
+    # List of candidate index locations to support different build outputs
+    candidates = [
+        frontend_dist / "index.html",
+        Path(__file__).parent / "frontend" / "dist" / "index.html",
+        Path(__file__).parent / "frontend" / "build" / "index.html",
+        Path(__file__).parent / "dist" / "index.html",
+    ]
+    for index_path in candidates:
+        try:
+            if index_path.exists():
+                # mount static for the parent directory if not already mounted
+                parent_dir = index_path.parent
+                if not any(isinstance(m, StaticFiles) for m in app.router.routes if getattr(m, 'name', None) == 'static'):
+                    app.mount("/static", StaticFiles(directory=str(parent_dir)), name="static")
+                return FileResponse(index_path)
+        except Exception:
+            continue
+
+    # Fallback: simple HTML indicating API is running
+    return JSONResponse({"status": "ok", "service": "document-comparison-api", "note": "Frontend not found on server."})
 
 
 def _extract_client_ip(request: Request) -> str:
