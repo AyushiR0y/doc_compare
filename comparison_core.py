@@ -90,6 +90,7 @@ def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
 
 
 def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any]], Document]:
+    logger.debug("[WORD] Starting DOCX word extraction...")
     doc = Document(BytesIO(file_bytes))
 
     word_objects: list[dict[str, Any]] = []
@@ -194,6 +195,8 @@ def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any
         elif isinstance(element, CT_Tbl):
             process_table(Table(element, doc))
 
+    logger.debug(f"[WORD] Extracted {len(text_segments)} words from DOCX")
+    logger.debug(f"[WORD] First 20 tokens: {text_segments[:20]}")
     return " ".join(text_segments), word_objects, doc
 
 
@@ -253,10 +256,21 @@ def _extract_words_from_pdf(file_bytes: bytes) -> tuple[str, list[dict[str, Any]
 
         word_objects.append({"type": "newline", "text": "\n"})
 
+    logger.debug(f"[PDF] Extracted {len(text_segments)} words from PDF")
+    logger.debug(f"[PDF] First 20 tokens: {text_segments[:20]}")
     return " ".join(text_segments), word_objects, highlight_data, doc
 
 
 def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int], dict[str, int]]:
+    logger.debug(f"[DIFF] Document 1: {len(words1)} words")
+    logger.debug(f"[DIFF] Document 2: {len(words2)} words")
+    
+    # Show first/last 10 words from each for debugging
+    logger.debug(f"[DIFF] Doc1 first 10: {words1[:10]}")
+    logger.debug(f"[DIFF] Doc1 last 10: {words1[-10:]}")
+    logger.debug(f"[DIFF] Doc2 first 10: {words2[:10]}")
+    logger.debug(f"[DIFF] Doc2 last 10: {words2[-10:]}")
+    
     norm_words1: list[str] = []
     norm_words2: list[str] = []
     norm_to_orig_idx1: list[int] = []
@@ -273,6 +287,10 @@ def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int],
         if normalized:
             norm_words2.append(normalized)
             norm_to_orig_idx2.append(orig_idx)
+
+    logger.debug(f"[DIFF] After normalization: Doc1={len(norm_words1)} words, Doc2={len(norm_words2)} words")
+    logger.debug(f"[DIFF] Doc1 normalized first 10: {norm_words1[:10]}")
+    logger.debug(f"[DIFF] Doc2 normalized first 10: {norm_words2[:10]}")
 
     matcher = difflib.SequenceMatcher(None, norm_words1, norm_words2, autojunk=False)
     opcodes = matcher.get_opcodes()
@@ -292,6 +310,16 @@ def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int],
     diff_indices1.update(norm_to_orig_idx1[idx] for idx in diff_norm_indices1)
     diff_indices2.update(norm_to_orig_idx2[idx] for idx in diff_norm_indices2)
 
+    logger.debug(f"[DIFF] Result: Doc1 has {len(diff_indices1)} different words, Doc2 has {len(diff_indices2)} different words")
+    
+    # Log first 30 different words from each document for debugging
+    diff_words1_sample = sorted(diff_indices1)[:30]
+    diff_words2_sample = sorted(diff_indices2)[:30]
+    logger.debug(f"[DIFF] Doc1 first 30 different word indices: {diff_words1_sample}")
+    logger.debug(f"[DIFF] Doc1 first 30 different words: {[words1[i] for i in diff_words1_sample if i < len(words1)]}")
+    logger.debug(f"[DIFF] Doc2 first 30 different word indices: {diff_words2_sample}")
+    logger.debug(f"[DIFF] Doc2 first 30 different words: {[words2[i] for i in diff_words2_sample if i < len(words2)]}")
+    
     total_matching = sum(i2 - i1 for tag, i1, i2, _, _ in opcodes if tag == "equal")
     info = {
         "total_matching": total_matching,

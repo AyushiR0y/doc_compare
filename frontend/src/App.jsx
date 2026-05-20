@@ -348,9 +348,8 @@ export default function App() {
           <span className="hero-badge"><WandSparkles size={14} /> Clean comparison</span>
           <span className="hero-badge"><Files size={14} /> PDF + DOCX</span>
         </div>
-        <p className="eyebrow">Deterministic document diff</p>
-        <h1>Compare documents with a light, focused preview.</h1>
-        <p>Uploads, previews, highlights, and downloads stay rule-based and deterministic.</p>
+        <h1>DiffChecker</h1>
+        <p>Uploads documents, generates previews, highlights changes, and allows downloads while maintaining rule-based and deterministic behavior.</p>
       </header>
 
       <form className="uploader-grid" onSubmit={runPreviewComparison}>
