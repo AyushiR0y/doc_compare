@@ -26,6 +26,10 @@ def _normalize_word(word: str) -> str:
     return word.translate(_PUNCT_TRANSLATOR).lower().strip()
 
 
+def _collect_word_tokens(word_objects: list[dict[str, Any]]) -> list[str]:
+    return [obj["text"] for obj in word_objects if obj.get("type") == "word" and obj.get("text")]
+
+
 def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert DOCX to PDF using Word COM automation on Windows."""
     logger.info("Starting DOCX to PDF conversion...")
@@ -252,10 +256,7 @@ def _extract_words_from_pdf(file_bytes: bytes) -> tuple[str, list[dict[str, Any]
     return " ".join(text_segments), word_objects, highlight_data, doc
 
 
-def _run_diff(text1: str, text2: str) -> tuple[set[int], set[int], dict[str, int]]:
-    words1 = text1.split()
-    words2 = text2.split()
-
+def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int], dict[str, int]]:
     norm_words1: list[str] = []
     norm_words2: list[str] = []
     norm_to_orig_idx1: list[int] = []
@@ -618,14 +619,17 @@ def compare_documents(doc1_name: str, doc1_bytes: bytes, doc2_name: str, doc2_by
         text2, word_objs2, docx_doc2 = _extract_words_from_word(doc2_bytes)
         highlight_data2 = None
 
-    if not text1 or not text2:
+    words1 = _collect_word_tokens(word_objs1)
+    words2 = _collect_word_tokens(word_objs2)
+
+    if not words1 or not words2:
         if pdf_doc1:
             pdf_doc1.close()
         if pdf_doc2:
             pdf_doc2.close()
         raise ValueError("Could not extract text from one or both documents")
 
-    diff1, diff2, info = _run_diff(text1, text2)
+    diff1, diff2, info = _run_diff(words1, words2)
 
     try:
         if is_pdf1:
@@ -697,29 +701,35 @@ def compare_documents_with_preview(
         text2, word_objs2, docx_doc2 = _extract_words_from_word(doc2_bytes)
         highlight_data2 = None
 
-    if not text1 or not text2:
+    words1 = _collect_word_tokens(word_objs1)
+    words2 = _collect_word_tokens(word_objs2)
+
+    if not words1 or not words2:
         if pdf_doc1:
             pdf_doc1.close()
         if pdf_doc2:
             pdf_doc2.close()
         raise ValueError("Could not extract text from one or both documents")
 
-    diff1, diff2, info = _run_diff(text1, text2)
+    diff1, diff2, info = _run_diff(words1, words2)
 
     # Convert DOCX to PDF for preview rendering (for visual consistency)
     preview_pdf_doc1 = None
     preview_pdf_doc2 = None
     preview_highlight_data1 = highlight_data1
     preview_highlight_data2 = highlight_data2
+    preview_diff1 = diff1
+    preview_diff2 = diff2
 
     try:
         if not is_pdf1:
             try:
+                highlighted_docx1 = _highlight_word_doc(docx_doc1, word_objs1, diff1)
                 # Convert DOCX to PDF for preview
-                pdf_bytes1 = _convert_docx_to_pdf(doc1_bytes)
+                pdf_bytes1 = _convert_docx_to_pdf(highlighted_docx1.getvalue())
                 preview_pdf_doc1 = fitz.open(stream=pdf_bytes1, filetype="pdf")
-                # Extract highlight data from the converted PDF
-                _, _, preview_highlight_data1, _ = _extract_words_from_pdf(pdf_bytes1)
+                preview_highlight_data1 = []
+                preview_diff1 = set()
             except Exception as ex:
                 raise ValueError(f"Failed to convert Document 1 (DOCX) to PDF for preview: {str(ex)}")
         else:
@@ -727,11 +737,12 @@ def compare_documents_with_preview(
 
         if not is_pdf2:
             try:
+                highlighted_docx2 = _highlight_word_doc(docx_doc2, word_objs2, diff2)
                 # Convert DOCX to PDF for preview
-                pdf_bytes2 = _convert_docx_to_pdf(doc2_bytes)
+                pdf_bytes2 = _convert_docx_to_pdf(highlighted_docx2.getvalue())
                 preview_pdf_doc2 = fitz.open(stream=pdf_bytes2, filetype="pdf")
-                # Extract highlight data from the converted PDF
-                _, _, preview_highlight_data2, _ = _extract_words_from_pdf(pdf_bytes2)
+                preview_highlight_data2 = []
+                preview_diff2 = set()
             except Exception as ex:
                 raise ValueError(f"Failed to convert Document 2 (DOCX) to PDF for preview: {str(ex)}")
         else:
@@ -744,7 +755,7 @@ def compare_documents_with_preview(
             "pages": _render_pdf_preview_base64(
                 preview_pdf_doc1,
                 preview_highlight_data1,
-                diff1,
+                preview_diff1,
                 max_pages=max_pages,
                 include_images=include_images,
             ),
@@ -760,7 +771,7 @@ def compare_documents_with_preview(
             "pages": _render_pdf_preview_base64(
                 preview_pdf_doc2,
                 preview_highlight_data2,
-                diff2,
+                preview_diff2,
                 max_pages=max_pages,
                 include_images=include_images,
             ),
