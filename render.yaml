@@ -3,8 +3,6 @@ services:
     name: diffchecker
     env: python
     plan: free
-    # Build frontend then install Python dependencies
-    # Ensure Node is available in the Python build image, then build frontend
-    buildCommand: bash -c "curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && apt-get update && apt-get install -y nodejs build-essential && cd frontend && npm ci && npm run build && cd .. && pip install -r requirements.txt"
+    buildCommand: "cd frontend && npm ci && npm run build && cd .. && pip install -r requirements.txt"
     startCommand: uvicorn fastapi_app:app --host 0.0.0.0 --port $PORT
     autoDeploy: true

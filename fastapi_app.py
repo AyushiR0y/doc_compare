@@ -32,20 +32,24 @@ USAGE_LOG_FILE = get_usage_log_path(__file__)
 # Determine frontend dist path
 frontend_dist = Path(__file__).parent / "frontend" / "dist"
 
-# Mount static files from the dist directory
-if frontend_dist.exists() and (frontend_dist / "static").exists():
+# Mount ALL static assets (Vite puts them in dist/static/)
+if frontend_dist.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dist / "static")), name="static")
 
-# Serve the frontend index.html at the root
 @app.get("/", include_in_schema=False)
 async def root_index():
     index_path = frontend_dist / "index.html"
-    
     if index_path.exists():
         return FileResponse(index_path)
-    
-    # Fallback: simple HTML indicating API is running
     return JSONResponse({"status": "ok", "service": "document-comparison-api", "note": "Frontend not found on server."})
+
+# Catch-all: serve index.html for any unmatched route (for client-side routing)
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    index_path = frontend_dist / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/_debug/frontend_status", include_in_schema=False)
