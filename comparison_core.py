@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import difflib
 import logging
+import re
 import string
 import tempfile
 from io import BytesIO
@@ -20,6 +21,25 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
 _PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
+_LOW_SIGNAL_WORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
 
 
 def _normalize_word(word: str) -> str:
@@ -28,6 +48,10 @@ def _normalize_word(word: str) -> str:
 
 def _collect_word_tokens(word_objects: list[dict[str, Any]]) -> list[str]:
     return [obj["text"] for obj in word_objects if obj.get("type") == "word" and obj.get("text")]
+
+
+def _is_low_signal_token(token: str) -> bool:
+    return len(token) <= 1 or token in _LOW_SIGNAL_WORDS
 
 
 def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
@@ -303,9 +327,13 @@ def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int],
     diff_norm_indices2: set[int] = set()
     for tag, i1, i2, j1, j2 in opcodes:
         if tag in {"replace", "delete"}:
-            diff_norm_indices1.update(range(i1, i2))
+            for idx in range(i1, i2):
+                if not _is_low_signal_token(norm_words1[idx]):
+                    diff_norm_indices1.add(idx)
         if tag in {"replace", "insert"}:
-            diff_norm_indices2.update(range(j1, j2))
+            for idx in range(j1, j2):
+                if not _is_low_signal_token(norm_words2[idx]):
+                    diff_norm_indices2.add(idx)
 
     diff_indices1.update(norm_to_orig_idx1[idx] for idx in diff_norm_indices1)
     diff_indices2.update(norm_to_orig_idx2[idx] for idx in diff_norm_indices2)
@@ -375,6 +403,7 @@ def _highlight_word_doc(doc: Document, word_objects: list[dict[str, Any]], diff_
     from docx.oxml.text.paragraph import CT_P
     from docx.table import Table
     from docx.text.paragraph import Paragraph
+    from docx.text.run import Run
 
     text_idx = 0
     obj_indices_to_highlight: set[int] = set()
@@ -386,48 +415,68 @@ def _highlight_word_doc(doc: Document, word_objects: list[dict[str, Any]], diff_
 
     current_obj_idx = 0
 
+    def copy_run_style(src: Run, dst: Run) -> None:
+        dst.style = src.style
+        dst.bold = src.bold
+        dst.italic = src.italic
+        dst.underline = src.underline
+        dst.font.name = src.font.name
+        dst.font.size = src.font.size
+        dst.font.color.rgb = src.font.color.rgb
+
+    def apply_token_level_highlight(para: Paragraph, color: WD_COLOR_INDEX) -> None:
+        nonlocal current_obj_idx
+
+        original_runs = list(para.runs)
+        for run in original_runs:
+            if not run.text:
+                continue
+
+            parts = re.findall(r"\S+|\s+", run.text)
+            segmented: list[tuple[str, bool]] = []
+            has_highlight = False
+
+            for part in parts:
+                if part.isspace():
+                    segmented.append((part, False))
+                    continue
+
+                while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]["type"] != "word":
+                    current_obj_idx += 1
+
+                should_highlight = current_obj_idx < len(word_objects) and current_obj_idx in obj_indices_to_highlight
+                segmented.append((part, should_highlight))
+                has_highlight = has_highlight or should_highlight
+                current_obj_idx += 1
+
+            if not has_highlight:
+                continue
+
+            first_text, first_highlight = segmented[0]
+            run.text = first_text
+            run.font.highlight_color = color if first_highlight else None
+
+            prev_run = run
+            for text_part, should_highlight in segmented[1:]:
+                new_run = para.add_run(text_part)
+                copy_run_style(run, new_run)
+                new_run.font.highlight_color = color if should_highlight else None
+                prev_run._r.addnext(new_run._r)
+                prev_run = new_run
+
     for element in doc.element.body:
         if isinstance(element, CT_P):
             para = Paragraph(element, doc)
             if not para.text.strip():
                 continue
-
-            for run in para.runs:
-                if not run.text:
-                    continue
-
-                highlight_run = False
-                for _ in run.text.split():
-                    while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]["type"] != "word":
-                        current_obj_idx += 1
-
-                    if current_obj_idx < len(word_objects) and current_obj_idx in obj_indices_to_highlight:
-                        highlight_run = True
-                    current_obj_idx += 1
-
-                if highlight_run:
-                    run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            apply_token_level_highlight(para, WD_COLOR_INDEX.YELLOW)
 
         elif isinstance(element, CT_Tbl):
             table = Table(element, doc)
             for row in table.rows:
                 for cell in row.cells:
                     for para in cell.paragraphs:
-                        for run in para.runs:
-                            if not run.text:
-                                continue
-
-                            highlight_run = False
-                            for _ in run.text.split():
-                                while current_obj_idx < len(word_objects) and word_objects[current_obj_idx]["type"] != "word":
-                                    current_obj_idx += 1
-
-                                if current_obj_idx < len(word_objects) and current_obj_idx in obj_indices_to_highlight:
-                                    highlight_run = True
-                                current_obj_idx += 1
-
-                            if highlight_run:
-                                run.font.highlight_color = WD_COLOR_INDEX.BRIGHT_GREEN
+                        apply_token_level_highlight(para, WD_COLOR_INDEX.BRIGHT_GREEN)
 
     output = BytesIO()
     doc.save(output)
