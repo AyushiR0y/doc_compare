@@ -54,6 +54,32 @@ def _is_low_signal_token(token: str) -> bool:
     return len(token) <= 1 or token in _LOW_SIGNAL_WORDS
 
 
+def _filter_isolated_diff_indices(indices: set[int], support_window: int = 3, min_neighbors: int = 1) -> set[int]:
+    if not indices:
+        return set()
+
+    sorted_indices = sorted(indices)
+    filtered: set[int] = set()
+
+    for pos, idx in enumerate(sorted_indices):
+        neighbors = 0
+
+        left = pos - 1
+        while left >= 0 and idx - sorted_indices[left] <= support_window:
+            neighbors += 1
+            left -= 1
+
+        right = pos + 1
+        while right < len(sorted_indices) and sorted_indices[right] - idx <= support_window:
+            neighbors += 1
+            right += 1
+
+        if neighbors >= min_neighbors:
+            filtered.add(idx)
+
+    return filtered
+
+
 def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert DOCX to PDF using Word COM automation on Windows."""
     logger.info("Starting DOCX to PDF conversion...")
@@ -334,6 +360,9 @@ def _run_diff(words1: list[str], words2: list[str]) -> tuple[set[int], set[int],
             for idx in range(j1, j2):
                 if not _is_low_signal_token(norm_words2[idx]):
                     diff_norm_indices2.add(idx)
+
+    diff_norm_indices1 = _filter_isolated_diff_indices(diff_norm_indices1)
+    diff_norm_indices2 = _filter_isolated_diff_indices(diff_norm_indices2)
 
     diff_indices1.update(norm_to_orig_idx1[idx] for idx in diff_norm_indices1)
     diff_indices2.update(norm_to_orig_idx2[idx] for idx in diff_norm_indices2)
