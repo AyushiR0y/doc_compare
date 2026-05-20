@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import difflib
+import logging
 import string
+import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,10 @@ import fitz  # PyMuPDF
 from docx import Document
 from PIL import Image, ImageDraw
 
+# Enable debug logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
 
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
 _PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
@@ -18,6 +24,65 @@ _PUNCT_TRANSLATOR = str.maketrans("", "", string.punctuation)
 
 def _normalize_word(word: str) -> str:
     return word.translate(_PUNCT_TRANSLATOR).lower().strip()
+
+
+def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
+    """Convert DOCX to PDF using Word COM automation on Windows."""
+    logger.info("Starting DOCX to PDF conversion...")
+    try:
+        import win32com.client
+    except ImportError:
+        raise RuntimeError("pywin32 is required for DOCX-to-PDF conversion. Install with: pip install pywin32")
+
+    # Create temporary files for input and output
+    with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp_docx:
+        tmp_docx.write(docx_bytes)
+        tmp_docx_path = tmp_docx.name
+    logger.debug(f"Created temp DOCX file: {tmp_docx_path}")
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+        tmp_pdf_path = tmp_pdf.name
+    logger.debug(f"Created temp PDF file: {tmp_pdf_path}")
+
+    try:
+        # Get Word COM object
+        logger.debug("Dispatching Word.Application...")
+        word = win32com.client.Dispatch("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = 0
+        logger.debug("Word application initialized")
+
+        try:
+            # Open the DOCX file
+            logger.debug(f"Opening DOCX: {tmp_docx_path}")
+            doc = word.Documents.Open(str(Path(tmp_docx_path).resolve()))
+            logger.debug("DOCX opened successfully")
+
+            # Export as PDF (wdFormatPDF = 17)
+            logger.debug(f"Saving to PDF: {tmp_pdf_path}")
+            doc.SaveAs2(str(Path(tmp_pdf_path).resolve()), FileFormat=17)
+            doc.Close(0)
+            logger.debug("Document saved and closed")
+
+            # Read the PDF bytes
+            with open(tmp_pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+            logger.info(f"Conversion successful. PDF size: {len(pdf_bytes)} bytes")
+
+            return pdf_bytes
+        finally:
+            logger.debug("Quitting Word application...")
+            word.Quit()
+    finally:
+        # Clean up temporary files
+        try:
+            Path(tmp_docx_path).unlink()
+        except Exception:
+            pass
+        try:
+            Path(tmp_pdf_path).unlink()
+        except Exception:
+            pass
 
 
 def _extract_words_from_word(file_bytes: bytes) -> tuple[str, list[dict[str, Any]], Document]:
@@ -641,63 +706,92 @@ def compare_documents_with_preview(
 
     diff1, diff2, info = _run_diff(text1, text2)
 
-    try:
-        if is_pdf1:
-            doc1_page_limit = len(pdf_doc1) if max_pages <= 0 else min(max_pages, len(pdf_doc1))
-            preview1 = {
-                "type": "pdf_images",
-                "pages": _render_pdf_preview_base64(
-                    pdf_doc1,
-                    highlight_data1,
-                    diff1,
-                    max_pages=max_pages,
-                    include_images=include_images,
-                ),
-                "images_included": include_images,
-                "page_count": len(pdf_doc1),
-                "truncated": len(pdf_doc1) > doc1_page_limit,
-                "total_pages": len(pdf_doc1),
-            }
-        else:
-            html_preview1, page_count1 = _create_html_preview(word_objs1, diff1)
-            preview1 = {
-                "type": "html",
-                "html": html_preview1,
-                "page_count": page_count1,
-                "truncated": False,
-                "total_pages": None,
-            }
+    # Convert DOCX to PDF for preview rendering (for visual consistency)
+    preview_pdf_doc1 = None
+    preview_pdf_doc2 = None
+    preview_highlight_data1 = highlight_data1
+    preview_highlight_data2 = highlight_data2
 
-        if is_pdf2:
-            doc2_page_limit = len(pdf_doc2) if max_pages <= 0 else min(max_pages, len(pdf_doc2))
-            preview2 = {
-                "type": "pdf_images",
-                "pages": _render_pdf_preview_base64(
-                    pdf_doc2,
-                    highlight_data2,
-                    diff2,
-                    max_pages=max_pages,
-                    include_images=include_images,
-                ),
-                "images_included": include_images,
-                "page_count": len(pdf_doc2),
-                "truncated": len(pdf_doc2) > doc2_page_limit,
-                "total_pages": len(pdf_doc2),
-            }
+    try:
+        if not is_pdf1:
+            try:
+                # Convert DOCX to PDF for preview
+                pdf_bytes1 = _convert_docx_to_pdf(doc1_bytes)
+                preview_pdf_doc1 = fitz.open(stream=pdf_bytes1, filetype="pdf")
+                # Extract highlight data from the converted PDF
+                _, _, preview_highlight_data1, _ = _extract_words_from_pdf(pdf_bytes1)
+            except Exception as ex:
+                raise ValueError(f"Failed to convert Document 1 (DOCX) to PDF for preview: {str(ex)}")
         else:
-            html_preview2, page_count2 = _create_html_preview(word_objs2, diff2)
-            preview2 = {
-                "type": "html",
-                "html": html_preview2,
-                "page_count": page_count2,
-                "truncated": False,
-                "total_pages": None,
-            }
+            preview_pdf_doc1 = pdf_doc1
+
+        if not is_pdf2:
+            try:
+                # Convert DOCX to PDF for preview
+                pdf_bytes2 = _convert_docx_to_pdf(doc2_bytes)
+                preview_pdf_doc2 = fitz.open(stream=pdf_bytes2, filetype="pdf")
+                # Extract highlight data from the converted PDF
+                _, _, preview_highlight_data2, _ = _extract_words_from_pdf(pdf_bytes2)
+            except Exception as ex:
+                raise ValueError(f"Failed to convert Document 2 (DOCX) to PDF for preview: {str(ex)}")
+        else:
+            preview_pdf_doc2 = pdf_doc2
+
+        # Render both as PDF page images
+        doc1_page_limit = len(preview_pdf_doc1) if max_pages <= 0 else min(max_pages, len(preview_pdf_doc1))
+        preview1 = {
+            "type": "pdf_images",
+            "pages": _render_pdf_preview_base64(
+                preview_pdf_doc1,
+                preview_highlight_data1,
+                diff1,
+                max_pages=max_pages,
+                include_images=include_images,
+            ),
+            "images_included": include_images,
+            "page_count": len(preview_pdf_doc1),
+            "truncated": len(preview_pdf_doc1) > doc1_page_limit,
+            "total_pages": len(preview_pdf_doc1),
+        }
+
+        doc2_page_limit = len(preview_pdf_doc2) if max_pages <= 0 else min(max_pages, len(preview_pdf_doc2))
+        preview2 = {
+            "type": "pdf_images",
+            "pages": _render_pdf_preview_base64(
+                preview_pdf_doc2,
+                preview_highlight_data2,
+                diff2,
+                max_pages=max_pages,
+                include_images=include_images,
+            ),
+            "images_included": include_images,
+            "page_count": len(preview_pdf_doc2),
+            "truncated": len(preview_pdf_doc2) > doc2_page_limit,
+            "total_pages": len(preview_pdf_doc2),
+        }
     finally:
-        if pdf_doc1:
-            pdf_doc1.close()
-        if pdf_doc2:
-            pdf_doc2.close()
+        # Close original documents safely
+        try:
+            if pdf_doc1:
+                pdf_doc1.close()
+        except Exception:
+            pass
+        try:
+            if pdf_doc2:
+                pdf_doc2.close()
+        except Exception:
+            pass
+        # Close preview documents (if they're not the original PDFs) safely
+        try:
+            if preview_pdf_doc1 and not is_pdf1:
+                preview_pdf_doc1.close()
+        except Exception:
+            pass
+        try:
+            if preview_pdf_doc2 and not is_pdf2:
+                preview_pdf_doc2.close()
+        except Exception:
+            pass
 
     return {
         "summary": {

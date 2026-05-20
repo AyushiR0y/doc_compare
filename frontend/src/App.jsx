@@ -1,4 +1,17 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
+import {
+  ArrowLeftRight,
+  BarChart3,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FileUp,
+  Files,
+  LayoutPanelTop,
+  MousePointer2,
+  Sparkles,
+  WandSparkles,
+} from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -18,8 +31,13 @@ function DocPreview({ doc, title, scrollRef }) {
 
   return (
     <section className="preview-card">
-      <h3>{title}</h3>
-      <p className="preview-subtitle">{doc.name}</p>
+      <div className="card-heading-row">
+        <div className="card-heading-icon"><LayoutPanelTop size={18} /></div>
+        <div>
+          <h3>{title}</h3>
+          <p className="preview-subtitle">{doc.name}</p>
+        </div>
+      </div>
 
       {preview.type === "html" ? (
         <div
@@ -167,12 +185,12 @@ export default function App() {
       return;
     }
 
-    if (!syncScroll) {
+    if (!syncScroll || syncMode !== "page") {
       return;
     }
 
     syncBothPreviewsToPage(currentPageIndex);
-  }, [currentPageIndex, result, syncScroll]);
+  }, [currentPageIndex, result, syncScroll, syncMode, pageOffset]);
 
   // Attach native listeners for page-based scrolling
   useEffect(() => {
@@ -182,13 +200,13 @@ export default function App() {
     if (!el1 || !el2) return;
 
     function onScroll1() {
-      if (!syncScroll || scrollLockRef.current) return;
+      if (scrollLockRef.current) return;
       const pageIndex = getPageIndexForContainer(el1);
       setCurrentPageIndex(pageIndex);
     }
 
     function onScroll2() {
-      if (!syncScroll || scrollLockRef.current) return;
+      if (scrollLockRef.current) return;
       const pageIndex = getPageIndexForContainer(el2);
       setCurrentPageIndex(pageIndex);
     }
@@ -326,20 +344,24 @@ export default function App() {
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Deterministic Document Diff</p>
-        <h1>Document Comparison Studio</h1>
-        <p>
-          This comparison is deterministic and rule-based. No AI is used in matching or highlighting.
-        </p>
-        <p>
-          Highlights indicate changed or added words and sections, and for PDFs the highlighted pages show where changes appear.
-        </p>
+        <div className="hero-badge-row">
+          <span className="hero-badge"><WandSparkles size={14} /> Clean comparison</span>
+          <span className="hero-badge"><Files size={14} /> PDF + DOCX</span>
+        </div>
+        <p className="eyebrow">Deterministic document diff</p>
+        <h1>Compare documents with a light, focused preview.</h1>
+        <p>Uploads, previews, highlights, and downloads stay rule-based and deterministic.</p>
       </header>
 
       <form className="uploader-grid" onSubmit={runPreviewComparison}>
         <section className="upload-box">
-          <h2>Document 1</h2>
-          <p className="upload-help">Upload PDF or DOCX</p>
+          <div className="card-heading-row">
+            <div className="card-heading-icon"><FileUp size={18} /></div>
+            <div>
+              <h2>Document 1</h2>
+              <p className="upload-help">PDF or DOCX</p>
+            </div>
+          </div>
           <input
             type="file"
             accept=".pdf,.docx"
@@ -349,8 +371,13 @@ export default function App() {
         </section>
 
         <section className="upload-box">
-          <h2>Document 2</h2>
-          <p className="upload-help">Upload PDF or DOCX</p>
+          <div className="card-heading-row">
+            <div className="card-heading-icon"><FileUp size={18} /></div>
+            <div>
+              <h2>Document 2</h2>
+              <p className="upload-help">PDF or DOCX</p>
+            </div>
+          </div>
           <input
             type="file"
             accept=".pdf,.docx"
@@ -360,11 +387,11 @@ export default function App() {
         </section>
 
         <section className="controls">
-          <p className="muted-note">Preview loads all pages.</p>
+          <p className="muted-note">Preview loads every page and keeps the layout compact.</p>
 
           <div className="button-row">
             <button type="submit" disabled={!canCompare}>
-              {loading ? "Generating Preview..." : "Run Preview Comparison"}
+              <Sparkles size={16} /> {loading ? "Generating preview..." : "Run preview"}
             </button>
             <button
               type="button"
@@ -372,7 +399,7 @@ export default function App() {
               disabled={!file1 || !file2 || loading}
               onClick={downloadComparedFiles}
             >
-              Download Highlighted Files
+              <Download size={16} /> Download results
             </button>
           </div>
         </section>
@@ -382,29 +409,37 @@ export default function App() {
 
       {result ? (
         <section className="summary">
-          <h2>Comparison Summary</h2>
-          <p className="summary-note">
-            Highlights are based on changed or added text segments. Total highlighted changes: {result.summary.highlighted_changes}.
-          </p>
+          <div className="section-heading-row">
+            <div className="section-heading-icon"><BarChart3 size={18} /></div>
+            <div>
+              <h2>Comparison Summary</h2>
+              <p className="summary-note">Only essential counts are shown. Highlighted changes: {result.summary.highlighted_changes}.</p>
+            </div>
+          </div>
           <div className="stats-grid">
             <article>
-              <span>Total Words Doc 1</span>
+              <span>Words</span>
+              <small>Doc 1</small>
               <strong>{result.summary.total_words1}</strong>
             </article>
             <article>
-              <span>Total Words Doc 2</span>
+              <span>Words</span>
+              <small>Doc 2</small>
               <strong>{result.summary.total_words2}</strong>
             </article>
             <article>
-              <span>Highlighted Changes Doc 1</span>
+              <span>Changes</span>
+              <small>Doc 1</small>
               <strong>{result.summary.diff_words1}</strong>
             </article>
             <article>
-              <span>Highlighted Changes Doc 2</span>
+              <span>Changes</span>
+              <small>Doc 2</small>
               <strong>{result.summary.diff_words2}</strong>
             </article>
             <article>
-              <span>Match Rate</span>
+              <span>Match</span>
+              <small>Rate</small>
               <strong>{result.summary.match_rate}%</strong>
             </article>
           </div>
@@ -414,9 +449,14 @@ export default function App() {
       {result ? (
         <>
           <div className="preview-toolbar">
-            <div>
-              <h2>Document Preview</h2>
-              <p className="summary-note">Use the arrows to move both documents page by page. Scroll sync keeps the same page index aligned.</p>
+            <div className="toolbar-title-block">
+              <div className="section-heading-row compact">
+                <div className="section-heading-icon"><Sparkles size={18} /></div>
+                <div>
+                  <h2>Preview</h2>
+                  <p className="summary-note">Choose a mode, then keep scrolling aligned or compare page by page.</p>
+                </div>
+              </div>
             </div>
             <div className="preview-nav">
               {syncMode === "page" ? (
@@ -432,7 +472,7 @@ export default function App() {
                     }}
                     disabled={loading || currentPageIndex <= 0 || !syncScroll}
                   >
-                    ← Prev Page
+                    <ChevronLeft size={16} /> Prev
                   </button>
                   <button
                     type="button"
@@ -446,16 +486,16 @@ export default function App() {
                     }}
                     disabled={loading || !syncScroll}
                   >
-                    Next Page →
+                    Next <ChevronRight size={16} />
                   </button>
                 </>
               ) : null}
               <div className="sync-mode-group">
                 <button type="button" className={syncMode === "mouse" ? "sync-mode-button active" : "sync-mode-button"} onClick={() => setSyncMode("mouse")}>
-                  Mouse sync
+                  <MousePointer2 size={15} /> Mouse
                 </button>
                 <button type="button" className={syncMode === "page" ? "sync-mode-button active" : "sync-mode-button"} onClick={() => setSyncMode("page")}>
-                  Page sync
+                  <ArrowLeftRight size={15} /> Page
                 </button>
               </div>
               <label className="sync-switch">

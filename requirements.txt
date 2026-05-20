@@ -7,3 +7,4 @@ Pillow
 fastapi
 uvicorn[standard]
 python-multipart
+pywin32
