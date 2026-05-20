@@ -3,6 +3,7 @@ services:
     name: diffchecker
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # Build frontend then install Python dependencies
+    buildCommand: bash -lc "cd frontend && npm ci && npm run build && cd .. && pip install -r requirements.txt"
     startCommand: uvicorn fastapi_app:app --host 0.0.0.0 --port $PORT
     autoDeploy: true

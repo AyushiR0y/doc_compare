@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from comparison_core import ALLOWED_EXTENSIONS, compare_documents, compare_documents_with_preview
 from usage_storage import get_usage_log_path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 app = FastAPI(
     title="Document Comparison API",
@@ -26,6 +28,18 @@ app.add_middleware(
 )
 
 USAGE_LOG_FILE = get_usage_log_path(__file__)
+
+# Serve frontend static files when the built frontend exists (used in production deployments)
+frontend_dist = Path(__file__).parent / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/static", StaticFiles(directory=str(frontend_dist)), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def root_index():
+        index_path = frontend_dist / "index.html"
+        if index_path.exists():
+            return FileResponse(index_path)
+        return JSONResponse({"status": "ok", "service": "document-comparison-api"})
 
 
 def _extract_client_ip(request: Request) -> str:
