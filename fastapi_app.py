@@ -36,20 +36,12 @@ frontend_dist = Path(__file__).parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/static", StaticFiles(directory=str(frontend_dist / "static")), name="static")
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root_index():
     index_path = frontend_dist / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
     return JSONResponse({"status": "ok", "service": "document-comparison-api", "note": "Frontend not found on server."})
-
-# Catch-all: serve index.html for any unmatched route (for client-side routing)
-@app.get("/{full_path:path}", include_in_schema=False)
-async def spa_fallback(full_path: str):
-    index_path = frontend_dist / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
-    raise HTTPException(status_code=404, detail="Not found")
 
 
 @app.get("/_debug/frontend_status", include_in_schema=False)
@@ -204,3 +196,13 @@ async def compare_preview(
 
     _append_usage_event(request, file1.filename, file2.filename, ext1, ext2)
     return JSONResponse(preview_result)
+
+
+# Catch-all: must be registered LAST so it never shadows any real API routes.
+# Serves index.html for all unmatched GET routes (client-side routing).
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    index_path = frontend_dist / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Not found")

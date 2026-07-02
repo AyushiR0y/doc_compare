@@ -1,4 +1,16 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+index-CxBDS2qf.js:122  POST http://localhost:8000/compare-preview?max_pages=0&include_images=true 400 (Bad Request)
+Ct @ index-CxBDS2qf.js:122
+Fc @ index-CxBDS2qf.js:29
+jc @ index-CxBDS2qf.js:29
+Uc @ index-CxBDS2qf.js:29
+ai @ index-CxBDS2qf.js:29
+ea @ index-CxBDS2qf.js:29
+(anonymous) @ index-CxBDS2qf.js:29
+Po @ index-CxBDS2qf.js:32
+xs @ index-CxBDS2qf.js:29
+Il @ index-CxBDS2qf.js:29
+eo @ index-CxBDS2qf.js:29
+ef @ index-CxBDS2qf.js:29import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -13,7 +25,9 @@ import {
   WandSparkles,
 } from "lucide-react";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+// Empty string = relative URLs → works on any host (Render, local, etc.)
+// Override with VITE_API_BASE_URL env var for local Vite dev server only.
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 function getErrorMessage(error) {
   if (error instanceof Error) {

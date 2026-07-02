@@ -80,6 +80,127 @@ def _filter_isolated_diff_indices(indices: set[int], support_window: int = 3, mi
     return filtered
 
 
+def _render_docx_as_html(word_objs: list[dict[str, Any]], highlighted_indices: set[int]) -> str:
+    """Render DOCX word objects as styled HTML with diff highlights.
+
+    Works on all platforms – no Word or LibreOffice required.
+    """
+    from html import escape as _esc
+
+    parts: list[str] = []
+    word_idx = 0
+
+    # paragraph state
+    para_tokens: list[str] = []
+    para_is_heading = False
+
+    # table state
+    in_table = False
+    table_rows: list[list[str]] = []
+    current_row: list[str] = []       # list of rendered cell strings
+    current_cell: list[str] = []      # parts of the current cell
+
+    def _span(obj: dict, idx: int) -> str:
+        text = _esc(obj.get("text", ""))
+        styles: list[str] = []
+        if idx in highlighted_indices:
+            styles.append("background:#fff59d;border-radius:2px;padding:0 1px")
+        if obj.get("is_bold"):
+            styles.append("font-weight:bold")
+        if obj.get("is_italic"):
+            styles.append("font-style:italic")
+        return f'<span style="{";".join(styles)}">{text}</span>' if styles else text
+
+    def flush_para() -> None:
+        nonlocal para_tokens, para_is_heading
+        if not para_tokens:
+            para_is_heading = False
+            return
+        content = " ".join(para_tokens)
+        parts.append(f'<h3 class="doc-h">{content}</h3>' if para_is_heading else f"<p>{content}</p>")
+        para_tokens = []
+        para_is_heading = False
+
+    def flush_table() -> None:
+        nonlocal table_rows
+        if not table_rows:
+            return
+        rows_html = ["<table class='doc-tbl'><tbody>"]
+        for row in table_rows:
+            rows_html.append("<tr>" + "".join(f"<td class='doc-cell'>{c}</td>" for c in row) + "</tr>")
+        rows_html.append("</tbody></table>")
+        parts.append("".join(rows_html))
+        table_rows = []
+
+    parts.append('<div class="dh">')
+
+    for obj in word_objs:
+        t = obj.get("type")
+
+        if t == "word":
+            span = _span(obj, word_idx)
+            word_idx += 1
+            if in_table:
+                current_cell.append(span)
+            else:
+                para_tokens.append(span)
+                if obj.get("is_heading"):
+                    para_is_heading = True
+
+        elif t == "newline":
+            if not in_table:
+                flush_para()
+
+        elif t == "image":
+            src = obj.get("src", "")
+            ct = obj.get("content_type", "image/png")
+            img = f'<img src="data:{ct};base64,{src}" style="max-width:100%;height:auto;display:block;margin:4px 0"/>'
+            if in_table:
+                current_cell.append(img)
+            else:
+                flush_para()
+                parts.append(img)
+
+        elif t == "table_start":
+            flush_para()
+            in_table = True
+            table_rows, current_row, current_cell = [], [], []
+
+        elif t == "separator":
+            current_row.append(" ".join(current_cell))
+            current_cell = []
+
+        elif t == "row_end":
+            current_row.append(" ".join(current_cell))
+            current_cell = []
+            table_rows.append(current_row)
+            current_row = []
+
+        elif t == "table_end":
+            # flush any dangling cell / row
+            current_row.append(" ".join(current_cell))
+            current_cell = []
+            if any(current_row):
+                table_rows.append(current_row)
+            flush_table()
+            in_table = False
+
+    flush_para()
+    parts.append("</div>")
+
+    style = (
+        "<style>"
+        ".dh{font-family:Georgia,serif;font-size:14px;line-height:1.7;color:#222;padding:12px}"
+        ".dh p{margin:0 0 8px}"
+        ".doc-h{font-size:15px;font-weight:700;margin:12px 0 4px;color:#111}"
+        ".doc-tbl{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}"
+        ".doc-cell{border:1px solid #d1d5db;padding:5px 8px;vertical-align:top}"
+        "tr:nth-child(even) .doc-cell{background:#f9fafb}"
+        "</style>"
+    )
+    return style + "".join(parts)
+
+
 def _convert_docx_to_pdf(docx_bytes: bytes) -> bytes:
     """Convert DOCX to PDF using Word COM automation on Windows."""
     logger.info("Starting DOCX to PDF conversion...")
@@ -819,75 +940,56 @@ def compare_documents_with_preview(
 
     diff1, diff2, info = _run_diff(words1, words2)
 
-    # Convert DOCX to PDF for preview rendering (for visual consistency)
-    preview_pdf_doc1 = None
-    preview_pdf_doc2 = None
     preview_highlight_data1 = highlight_data1
     preview_highlight_data2 = highlight_data2
     preview_diff1 = diff1
     preview_diff2 = diff2
 
+    # Build previews — DOCX files render as HTML directly (no Word/LibreOffice needed),
+    # PDF files render as page images via PyMuPDF.
+    preview1: dict[str, Any]
+    preview2: dict[str, Any]
+
     try:
-        if not is_pdf1:
-            try:
-                highlighted_docx1 = _highlight_word_doc(docx_doc1, word_objs1, diff1)
-                # Convert DOCX to PDF for preview
-                pdf_bytes1 = _convert_docx_to_pdf(highlighted_docx1.getvalue())
-                preview_pdf_doc1 = fitz.open(stream=pdf_bytes1, filetype="pdf")
-                preview_highlight_data1 = []
-                preview_diff1 = set()
-            except Exception as ex:
-                raise ValueError(f"Failed to convert Document 1 (DOCX) to PDF for preview: {str(ex)}")
+        if is_pdf1:
+            doc1_page_limit = len(pdf_doc1) if max_pages <= 0 else min(max_pages, len(pdf_doc1))
+            preview1 = {
+                "type": "pdf_images",
+                "pages": _render_pdf_preview_base64(
+                    pdf_doc1,
+                    preview_highlight_data1,
+                    preview_diff1,
+                    max_pages=max_pages,
+                    include_images=include_images,
+                ),
+                "images_included": include_images,
+                "page_count": len(pdf_doc1),
+                "truncated": len(pdf_doc1) > doc1_page_limit,
+                "total_pages": len(pdf_doc1),
+            }
         else:
-            preview_pdf_doc1 = pdf_doc1
+            preview1 = {"type": "html", "html": _render_docx_as_html(word_objs1, diff1)}
 
-        if not is_pdf2:
-            try:
-                highlighted_docx2 = _highlight_word_doc(docx_doc2, word_objs2, diff2)
-                # Convert DOCX to PDF for preview
-                pdf_bytes2 = _convert_docx_to_pdf(highlighted_docx2.getvalue())
-                preview_pdf_doc2 = fitz.open(stream=pdf_bytes2, filetype="pdf")
-                preview_highlight_data2 = []
-                preview_diff2 = set()
-            except Exception as ex:
-                raise ValueError(f"Failed to convert Document 2 (DOCX) to PDF for preview: {str(ex)}")
+        if is_pdf2:
+            doc2_page_limit = len(pdf_doc2) if max_pages <= 0 else min(max_pages, len(pdf_doc2))
+            preview2 = {
+                "type": "pdf_images",
+                "pages": _render_pdf_preview_base64(
+                    pdf_doc2,
+                    preview_highlight_data2,
+                    preview_diff2,
+                    max_pages=max_pages,
+                    include_images=include_images,
+                ),
+                "images_included": include_images,
+                "page_count": len(pdf_doc2),
+                "truncated": len(pdf_doc2) > doc2_page_limit,
+                "total_pages": len(pdf_doc2),
+            }
         else:
-            preview_pdf_doc2 = pdf_doc2
-
-        # Render both as PDF page images
-        doc1_page_limit = len(preview_pdf_doc1) if max_pages <= 0 else min(max_pages, len(preview_pdf_doc1))
-        preview1 = {
-            "type": "pdf_images",
-            "pages": _render_pdf_preview_base64(
-                preview_pdf_doc1,
-                preview_highlight_data1,
-                preview_diff1,
-                max_pages=max_pages,
-                include_images=include_images,
-            ),
-            "images_included": include_images,
-            "page_count": len(preview_pdf_doc1),
-            "truncated": len(preview_pdf_doc1) > doc1_page_limit,
-            "total_pages": len(preview_pdf_doc1),
-        }
-
-        doc2_page_limit = len(preview_pdf_doc2) if max_pages <= 0 else min(max_pages, len(preview_pdf_doc2))
-        preview2 = {
-            "type": "pdf_images",
-            "pages": _render_pdf_preview_base64(
-                preview_pdf_doc2,
-                preview_highlight_data2,
-                preview_diff2,
-                max_pages=max_pages,
-                include_images=include_images,
-            ),
-            "images_included": include_images,
-            "page_count": len(preview_pdf_doc2),
-            "truncated": len(preview_pdf_doc2) > doc2_page_limit,
-            "total_pages": len(preview_pdf_doc2),
-        }
+            preview2 = {"type": "html", "html": _render_docx_as_html(word_objs2, diff2)}
     finally:
-        # Close original documents safely
+        # Close PDF documents safely
         try:
             if pdf_doc1:
                 pdf_doc1.close()
@@ -896,17 +998,6 @@ def compare_documents_with_preview(
         try:
             if pdf_doc2:
                 pdf_doc2.close()
-        except Exception:
-            pass
-        # Close preview documents (if they're not the original PDFs) safely
-        try:
-            if preview_pdf_doc1 and not is_pdf1:
-                preview_pdf_doc1.close()
-        except Exception:
-            pass
-        try:
-            if preview_pdf_doc2 and not is_pdf2:
-                preview_pdf_doc2.close()
         except Exception:
             pass
 
