@@ -1,16 +1,4 @@
-index-CxBDS2qf.js:122  POST http://localhost:8000/compare-preview?max_pages=0&include_images=true 400 (Bad Request)
-Ct @ index-CxBDS2qf.js:122
-Fc @ index-CxBDS2qf.js:29
-jc @ index-CxBDS2qf.js:29
-Uc @ index-CxBDS2qf.js:29
-ai @ index-CxBDS2qf.js:29
-ea @ index-CxBDS2qf.js:29
-(anonymous) @ index-CxBDS2qf.js:29
-Po @ index-CxBDS2qf.js:32
-xs @ index-CxBDS2qf.js:29
-Il @ index-CxBDS2qf.js:29
-eo @ index-CxBDS2qf.js:29
-ef @ index-CxBDS2qf.js:29import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   ArrowLeftRight,
   BarChart3,
