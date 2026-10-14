@@ -1,6 +1,5 @@
 [client]
-# The app renders its own sidebar nav (st.page_link) so the pages get proper
-# labels and icons instead of names derived from their filenames.
+# Single-page app with no sidebar.
 showSidebarNavigation = false
 showErrorDetails = false
 

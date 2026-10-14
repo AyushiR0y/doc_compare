@@ -148,7 +148,10 @@ button.icon{padding:5px 9px;font-size:13px}
 .dc.cur{outline:2.5px solid #ea580c;outline-offset:1px;border-radius:2px}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(234,88,12,.55)}100%{box-shadow:0 0 0 14px rgba(234,88,12,0)}}
 
-@media (max-width:900px){.panes{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}
+/* Only stack when genuinely too narrow for two columns. A higher breakpoint
+   silently stacked the panes on 1280px screens and on 1366px ones at Windows
+   125% scaling, which is the whole point of this view. */
+@media (max-width:640px){.panes{grid-template-columns:1fr;grid-template-rows:1fr 1fr}}
 """
 
 
@@ -156,7 +159,6 @@ def build_viewer_html(
     doc1: dict[str, Any],
     doc2: dict[str, Any],
     summary: dict[str, Any],
-    stacked: bool = False,
 ) -> str:
     body1, pages1 = _pane_body(doc1)
     body2, pages2 = _pane_body(doc2)
@@ -225,9 +227,16 @@ def build_viewer_html(
       <button class="icon" id="zoomIn">+</button>
       <button id="zoomReset">Reset</button>
     </div>
+    <div class="tgroup sep">
+      <span class="tlabel">Layout</span>
+      <div class="seg" id="layoutSeg">
+        <button data-layout="cols" class="on" title="Side by side">Columns</button>
+        <button data-layout="rows" title="One above the other">Rows</button>
+      </div>
+    </div>
   </div>
 
-  <div class="panes{' stacked' if stacked else ''}" id="panes">
+  <div class="panes" id="panes">
     <section class="pane active" id="pane1">
       <header class="phead" data-pane="1">{head(doc1, config["changes1"], pages1)}</header>
       <div class="scroll" id="s1">{body1}</div>
@@ -403,6 +412,12 @@ def build_viewer_html(
     s1.style.setProperty('--z', zoom); s2.style.setProperty('--z', zoom);
     document.getElementById('zoomInd').textContent = Math.round(zoom * 100) + '%';
   }}
+  document.getElementById('layoutSeg').addEventListener('click', function(e){{
+    var b = e.target.closest('button'); if (!b) return;
+    document.getElementById('panes').classList.toggle('stacked', b.dataset.layout === 'rows');
+    Array.prototype.forEach.call(this.children, function(c){{ c.classList.toggle('on', c === b); }});
+  }});
+
   document.getElementById('zoomIn').addEventListener('click', function(){{ setZoom(zoom + 0.15); }});
   document.getElementById('zoomOut').addEventListener('click', function(){{ setZoom(zoom - 0.15); }});
   document.getElementById('zoomReset').addEventListener('click', function(){{ setZoom(1); }});

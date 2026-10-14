@@ -41,7 +41,16 @@ _DEFAULTS = {
 
 
 def _config(key: str) -> str:
-    """Read a setting from st.secrets, then the environment, then the default."""
+    """Read a setting from the environment, then st.secrets, then the default.
+
+    The environment wins so a deployment can redirect or switch off reporting
+    without editing the secrets file - setting MIS_EMAIL_TO empty, for instance,
+    leaves reporting unconfigured and nothing is sent.
+    """
+    value = os.getenv(key)
+    if value is not None:
+        return value.strip()
+
     try:
         import streamlit as st
 
@@ -50,10 +59,6 @@ def _config(key: str) -> str:
     except Exception:
         # No secrets file configured, or Streamlit not running - fall through.
         pass
-
-    value = os.getenv(key)
-    if value:
-        return value.strip()
 
     return _DEFAULTS.get(key, "")
 
