@@ -1,4 +1,4 @@
-# Deploying Document Comparison Studio to Streamlit
+# Deploying Diffly to Streamlit
 
 ## Which file is the app?
 
@@ -65,11 +65,20 @@ It offers:
   same amount) and **Page** (stepping moves both panes a page at a time).
 * **Page stepping** with a page indicator, plus **Align** for two documents that
   sit a page apart. Pages line up 1:1 unless you press Align; the resulting
-  offset is shown in the toolbar so it is never a silent surprise. Page mode
-  needs two PDFs - a DOCX renders as one continuous sheet, and the toolbar says so.
+  offset is shown in the toolbar so it is never a silent surprise. This works for
+  Word files too, since they are paginated in the browser (below).
 * **Change stepping** - jump between highlighted differences in either document,
   with the current one ringed in orange. Per-page change counts show under each page.
-* **Zoom** and keyboard shortcuts: arrows for pages, `N`/`P` for changes, `S` for sync.
+* **Per-document zoom** in each pane's header, so one side can be enlarged without
+  disturbing the other.
+* **Layout** switch between columns and rows.
+* Keyboard shortcuts: arrows for pages, `N`/`P` for changes, `S` for sync.
+
+A DOCX has no pages of its own, so the browser paginates it: top-level blocks are
+measured against a page box and dealt onto page-shaped sheets, breaking only
+between blocks so no line is ever split. The sheet takes the page proportions of
+the PDF beside it where there is one, otherwise A4. Zoom scales the page width and
+the type together, so the layout stays self-similar and the pagination holds.
 
 ## MIS reporting
 

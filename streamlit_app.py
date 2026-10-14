@@ -50,7 +50,7 @@ MIME_BY_EXT = {
 }
 
 st.set_page_config(
-    page_title="Document Comparison Studio",
+    page_title="Diffly",
     page_icon=str(APP_DIR / "logo.png") if (APP_DIR / "logo.png").exists() else ":material/difference:",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -184,15 +184,25 @@ st.markdown(
     .block-container { padding: 1.9rem 1.6rem 2.6rem; max-width: 100%; }
     header[data-testid="stHeader"] { background: transparent; height: 0; }
     #MainMenu, footer { visibility: hidden; }
+    div[data-testid="stAppDeployButton"], div[data-testid="stToolbarActions"] { display: none; }
     section[data-testid="stSidebar"], div[data-testid="stSidebarCollapsedControl"] { display: none; }
 
-    /* ---------- header ---------- */
-    .hdr { display: flex; align-items: center; gap: 14px; margin: 0 0 22px; }
-    .hdr img { width: 46px; height: 46px; object-fit: contain; flex: 0 0 auto; }
-    .hdr h1 {
-        color: var(--ink); margin: 0; font-size: 1.42rem; font-weight: 700; letter-spacing: -.02em;
+    /* ---------- header ----------
+       logo.png is a 1231x647 wordmark, so it is sized by height and left to
+       keep its own aspect; a square box squashed it into a 46px sliver. */
+    .hdr { display: flex; align-items: center; gap: 16px; margin: 0 0 26px; }
+    .hdr img { height: 64px; width: auto; max-width: 240px; object-fit: contain; flex: 0 0 auto; }
+    .hdr .rule { width: 1px; height: 46px; background: var(--line); flex: 0 0 auto; }
+    /* Streamlit wraps heading text in a span of its own and appends an anchor-link
+       icon, so target the accent by class and hide the icon. */
+    .hdr h1, .hdr h1 span {
+        margin: 0; font-size: 2.6rem !important; font-weight: 800 !important;
+        letter-spacing: -.04em; line-height: 1; padding: 0;
+        color: var(--ink) !important;
     }
-    .hdr p { color: var(--muted); margin: 2px 0 0; font-size: .86rem; }
+    .hdr h1 .hl, .hdr h1 .hl span { color: var(--brand) !important; }
+    .hdr [data-testid="stHeaderActionElements"] { display: none; }
+    .hdr p { color: var(--muted); margin: 5px 0 0; font-size: .92rem; }
 
     .step {
         font-size: .95rem; font-weight: 700; color: var(--ink);
@@ -243,8 +253,29 @@ st.markdown(
     }
     div[data-testid="stFileUploader"] section:hover { border-color: var(--brand) !important; }
 
-    .stButton > button, .stDownloadButton > button { border-radius: 9px; font-weight: 640; }
-    .stButton > button[kind="primary"] { background: var(--brand); border: none; }
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 9px; font-weight: 640; transition: filter .14s ease, box-shadow .14s ease;
+    }
+    .stDownloadButton > button:hover { border-color: var(--brand); color: var(--brand); }
+
+    /* Compare button: inert grey with dark text until both files are in, then a
+       live gradient with light text. Streamlit marks the disabled state on the
+       button itself, so both looks come from the same rule. */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #0a63b0 0%, #1186d8 55%, #16a6c9 100%);
+        border: none; color: #fff; font-weight: 680; letter-spacing: .005em;
+        box-shadow: 0 4px 14px rgba(10, 99, 176, .28);
+    }
+    .stButton > button[kind="primary"]:hover:not(:disabled) {
+        filter: brightness(1.07); box-shadow: 0 6px 18px rgba(10, 99, 176, .36);
+    }
+    .stButton > button[kind="primary"]:disabled,
+    .stButton > button[kind="primary"][disabled] {
+        background: #e4e9f0; color: #4a5565 !important; box-shadow: none;
+        border: 1px solid #d3dbe6; opacity: 1;
+    }
+    .stButton > button[kind="primary"]:disabled p,
+    .stButton > button[kind="primary"][disabled] p { color: #4a5565 !important; }
 
     iframe { border: none !important; border-radius: 12px; }
 </style>
@@ -261,9 +292,9 @@ logo_b64 = _logo_data_uri()
 st.markdown(
     f"""
 <div class="hdr">
-    {f'<img src="data:image/png;base64,{logo_b64}"/>' if logo_b64 else ''}
+    {f'<img src="data:image/png;base64,{logo_b64}" alt=""/><div class="rule"></div>' if logo_b64 else ''}
     <div>
-        <h1>Document Comparison Studio</h1>
+        <h1>Diff<span class="hl">ly</span></h1>
         <p>Compare two PDF or Word files word by word. Every difference is highlighted in both.</p>
     </div>
 </div>
