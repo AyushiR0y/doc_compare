@@ -1,2 +1,14 @@
 [client]
 showSidebarNavigation = true
+showErrorDetails = false
+
+[theme]
+base = "light"
+primaryColor = "#005eac"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f8fd"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+maxUploadSize = 200

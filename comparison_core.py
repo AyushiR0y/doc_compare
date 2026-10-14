@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import difflib
 import logging
+import os
 import re
 import string
 import tempfile
@@ -14,9 +15,15 @@ import fitz  # PyMuPDF
 from docx import Document
 from PIL import Image, ImageDraw
 
-# Enable debug logging
-logging.basicConfig(level=logging.DEBUG)
+# Debug logging echoes document text, so it stays off unless explicitly asked for:
+# set DOC_COMPARE_DEBUG=1 to turn it on locally. Never enable it on a hosted
+# deployment, where the logs would capture the contents of every uploaded file.
 logger = logging.getLogger(__name__)
+if os.getenv("DOC_COMPARE_DEBUG", "").strip().lower() in {"1", "true", "yes"}:
+    logging.basicConfig(level=logging.DEBUG)
+    logger.setLevel(logging.DEBUG)
+else:
+    logger.setLevel(logging.WARNING)
 
 
 ALLOWED_EXTENSIONS = {"pdf", "docx"}
@@ -1011,4 +1018,150 @@ def compare_documents_with_preview(
         },
         "doc1": {"name": Path(_safe_name(doc1_name)).name, "extension": ext1, "preview": preview1},
         "doc2": {"name": Path(_safe_name(doc2_name)).name, "extension": ext2, "preview": preview2},
+    }
+
+
+def compare_documents_full(
+    doc1_name: str,
+    doc1_bytes: bytes,
+    doc2_name: str,
+    doc2_bytes: bytes,
+    max_pages: int = 0,
+    progress_cb: Any = None,
+) -> dict[str, Any]:
+    """Single-pass comparison returning previews *and* highlighted output files.
+
+    ``compare_documents`` builds downloadable files and ``compare_documents_with_preview``
+    builds previews; calling both repeats every extraction and diff. This does the
+    extraction and diff once and derives both sets of artifacts from it.
+
+    ``progress_cb`` is an optional ``callable(percent: int, label: str)`` used by the
+    Streamlit UI to drive a progress bar.
+    """
+
+    def _tick(percent: int, label: str) -> None:
+        if progress_cb:
+            try:
+                progress_cb(percent, label)
+            except Exception:
+                pass
+
+    ext1 = _extension(doc1_name)
+    ext2 = _extension(doc2_name)
+
+    if ext1 not in ALLOWED_EXTENSIONS or ext2 not in ALLOWED_EXTENSIONS:
+        raise ValueError("Only .pdf and .docx files are supported")
+
+    is_pdf1 = ext1 == "pdf"
+    is_pdf2 = ext2 == "pdf"
+
+    pdf_doc1 = None
+    pdf_doc2 = None
+
+    _tick(10, "Extracting text from document 1...")
+    if is_pdf1:
+        _, word_objs1, highlight_data1, pdf_doc1 = _extract_words_from_pdf(doc1_bytes)
+        docx_doc1 = None
+    else:
+        _, word_objs1, docx_doc1 = _extract_words_from_word(doc1_bytes)
+        highlight_data1 = None
+
+    _tick(25, "Extracting text from document 2...")
+    if is_pdf2:
+        _, word_objs2, highlight_data2, pdf_doc2 = _extract_words_from_pdf(doc2_bytes)
+        docx_doc2 = None
+    else:
+        _, word_objs2, docx_doc2 = _extract_words_from_word(doc2_bytes)
+        highlight_data2 = None
+
+    words1 = _collect_word_tokens(word_objs1)
+    words2 = _collect_word_tokens(word_objs2)
+
+    if not words1 or not words2:
+        if pdf_doc1:
+            pdf_doc1.close()
+        if pdf_doc2:
+            pdf_doc2.close()
+        raise ValueError("Could not extract text from one or both documents")
+
+    _tick(40, "Analysing differences...")
+    diff1, diff2, info = _run_diff(words1, words2)
+
+    page_count1 = len(pdf_doc1) if pdf_doc1 else 0
+    page_count2 = len(pdf_doc2) if pdf_doc2 else 0
+
+    try:
+        _tick(55, "Highlighting document 1...")
+        if is_pdf1:
+            highlighted_doc1 = _highlight_pdf_words(pdf_doc1, highlight_data1, diff1)
+            limit1 = page_count1 if max_pages <= 0 else min(max_pages, page_count1)
+            preview1 = {
+                "type": "pdf_images",
+                "pages": _render_pdf_preview_base64(
+                    pdf_doc1, highlight_data1, diff1, max_pages=max_pages, include_images=True
+                ),
+                "page_count": page_count1,
+                "total_pages": page_count1,
+                "truncated": page_count1 > limit1,
+            }
+        else:
+            highlighted_doc1 = _highlight_word_doc(docx_doc1, word_objs1, diff1)
+            preview1 = {"type": "html", "html": _render_docx_as_html(word_objs1, diff1)}
+
+        _tick(75, "Highlighting document 2...")
+        if is_pdf2:
+            highlighted_doc2 = _highlight_pdf_words(pdf_doc2, highlight_data2, diff2)
+            limit2 = page_count2 if max_pages <= 0 else min(max_pages, page_count2)
+            preview2 = {
+                "type": "pdf_images",
+                "pages": _render_pdf_preview_base64(
+                    pdf_doc2, highlight_data2, diff2, max_pages=max_pages, include_images=True
+                ),
+                "page_count": page_count2,
+                "total_pages": page_count2,
+                "truncated": page_count2 > limit2,
+            }
+        else:
+            highlighted_doc2 = _highlight_word_doc(docx_doc2, word_objs2, diff2)
+            preview2 = {"type": "html", "html": _render_docx_as_html(word_objs2, diff2)}
+    finally:
+        for handle in (pdf_doc1, pdf_doc2):
+            try:
+                if handle:
+                    handle.close()
+            except Exception:
+                pass
+
+    _tick(95, "Packaging results...")
+
+    stem1 = Path(_safe_name(doc1_name)).stem
+    stem2 = Path(_safe_name(doc2_name)).stem
+    largest = max(info["total_words1"], info["total_words2"])
+
+    summary = {
+        **info,
+        "highlighted_changes": len(diff1) + len(diff2),
+        "match_rate": round((info["total_matching"] / largest) * 100, 2) if largest > 0 else 0,
+    }
+
+    _tick(100, "Done")
+
+    return {
+        "summary": summary,
+        "doc1": {
+            "name": Path(_safe_name(doc1_name)).name,
+            "extension": ext1,
+            "preview": preview1,
+            "page_count": page_count1,
+            "output_name": f"highlighted_{stem1}.{ext1}",
+            "output_bytes": highlighted_doc1.getvalue(),
+        },
+        "doc2": {
+            "name": Path(_safe_name(doc2_name)).name,
+            "extension": ext2,
+            "preview": preview2,
+            "page_count": page_count2,
+            "output_name": f"highlighted_{stem2}.{ext2}",
+            "output_bytes": highlighted_doc2.getvalue(),
+        },
     }
