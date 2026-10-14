@@ -5,9 +5,10 @@
 | File | What it is | Status |
 | --- | --- | --- |
 | `streamlit_app.py` | **Deploy this.** Streamlit UI on the current engine, with MIS e-mail. | Current |
+| `preview_viewer.py` | The embedded side-by-side viewer (sync scrolling, page and change stepping). | Current |
 | `comparison_core.py` | The comparison engine. Shared by the Streamlit app and the API. | Current |
 | `mis_mailer.py` | Builds and sends the MIS report. | Current |
-| `pages/Usage_Dashboard.py` | Usage analytics page, appears in the sidebar automatically. | Current |
+| `pages/Usage_Dashboard.py` | Usage analytics page, linked from the sidebar. | Current |
 | `fastapi_app.py` + `frontend/` | FastAPI + React build of the same engine (Render deployment). | Parallel deployment |
 | `app.py` | The previous Streamlit app, with its own older copy of the comparison logic. | Superseded |
 
@@ -34,6 +35,8 @@ streamlit run streamlit_app.py
    GMAIL_USERNAME = "commissionsmis@gmail.com"
    GMAIL_APP_PASSWORD = "your-16-character-app-password"
    MIS_EMAIL_TO = "Ayushi.Roy01@bajajlife.com,bhagyashree.daga@bajajlife.com"
+   # Optional - the Usage Dashboard page stays locked until this is set:
+   # ADMIN_DASHBOARD_PASSWORD = "choose-a-password"
    ```
 
 6. Deploy. The header shows a green **MIS reporting on** pill once the secrets
@@ -41,6 +44,26 @@ streamlit run streamlit_app.py
 
 `requirements.txt` is shared with the FastAPI deployment, so it also installs
 `fastapi`/`uvicorn`. They are unused by the Streamlit app and harmless.
+
+## The side-by-side viewer
+
+Streamlit cannot synchronise scrolling between two of its own containers, so
+`preview_viewer.py` renders both documents, the toolbar and all the interaction
+into a single HTML document, embedded with `st.iframe` via a `data:` URL. The
+iframe gets an opaque origin, which is why it is fully isolated from the host
+page - and why nothing outside it can read into it.
+
+It offers:
+
+* **Sync toggle** and two modes - **Mouse** (the wheel moves both panes by the
+  same amount) and **Page** (stepping moves both panes a page at a time).
+* **Page stepping** with a page indicator, plus **Align** for two documents that
+  sit a page apart. Pages line up 1:1 unless you press Align; the resulting
+  offset is shown in the toolbar so it is never a silent surprise. Page mode
+  needs two PDFs - a DOCX renders as one continuous sheet, and the toolbar says so.
+* **Change stepping** - jump between highlighted differences in either document,
+  with the current one ringed in orange. Per-page change counts show under each page.
+* **Zoom** and keyboard shortcuts: arrows for pages, `N`/`P` for changes, `S` for sync.
 
 ## MIS reporting
 

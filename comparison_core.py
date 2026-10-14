@@ -110,13 +110,18 @@ def _render_docx_as_html(word_objs: list[dict[str, Any]], highlighted_indices: s
     def _span(obj: dict, idx: int) -> str:
         text = _esc(obj.get("text", ""))
         styles: list[str] = []
-        if idx in highlighted_indices:
+        changed = idx in highlighted_indices
+        if changed:
             styles.append("background:#fff59d;border-radius:2px;padding:0 1px")
         if obj.get("is_bold"):
             styles.append("font-weight:bold")
         if obj.get("is_italic"):
             styles.append("font-style:italic")
-        return f'<span style="{";".join(styles)}">{text}</span>' if styles else text
+        if not styles:
+            return text
+        # The "dc" class marks a changed word so a viewer can jump between them.
+        cls = ' class="dc"' if changed else ""
+        return f'<span{cls} style="{";".join(styles)}">{text}</span>'
 
     def flush_para() -> None:
         nonlocal para_tokens, para_is_heading
@@ -812,6 +817,15 @@ def _render_pdf_preview_base64(
         # include original image dimensions so the frontend can size and align pages
         page_payload["width_px"] = pix.width
         page_payload["height_px"] = pix.height
+
+        # Change rectangles in rendered-image pixels (the pixmap is drawn at 2x),
+        # so a viewer can anchor to each change and step between them. The
+        # highlights are already drawn into the image; these are for navigation.
+        page_payload["changes"] = [
+            [round(c * 2, 1) for c in word_info["bbox"]]
+            for word_info in page_to_words.get(page_num, [])
+        ]
+        page_payload["change_count"] = len(page_payload["changes"])
 
         previews.append(page_payload)
 
