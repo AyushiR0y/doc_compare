@@ -13,7 +13,6 @@ layout is self-similar and pagination holds steady as you zoom.
 
 from __future__ import annotations
 
-import base64
 import json
 from typing import Any
 
@@ -536,7 +535,3 @@ def build_viewer_html(
 }})();
 </script></body></html>"""
 
-
-def viewer_data_url(html: str) -> str:
-    """Wrap the viewer document as a data URL for st.iframe."""
-    return "data:text/html;base64," + base64.b64encode(html.encode("utf-8")).decode("ascii")

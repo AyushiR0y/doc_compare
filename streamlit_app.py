@@ -34,7 +34,7 @@ import streamlit as st
 
 import mis_mailer
 from comparison_core import ALLOWED_EXTENSIONS, compare_documents_full
-from preview_viewer import build_viewer_html, viewer_data_url
+from preview_viewer import build_viewer_html
 from usage_storage import get_usage_log_path
 
 logger = logging.getLogger(__name__)
@@ -524,7 +524,12 @@ if result:
         unsafe_allow_html=True,
     )
 
-    st.iframe(viewer_data_url(build_viewer_html(doc1, doc2, summary)), height=VIEWER_HEIGHT)
+    # Hand st.iframe the raw HTML, never a data: URL. Chromium caps a data: URL
+    # used for frame navigation at 2 MB and fails silently past it, so a PDF pair
+    # - whose page images ride along as base64 - rendered as a blank frame while a
+    # DOCX pair, being plain text, stayed under the cap. A raw HTML string goes to
+    # the iframe's srcdoc instead, which has no such limit.
+    st.iframe(build_viewer_html(doc1, doc2, summary), height=VIEWER_HEIGHT)
 
 elif ready:
     st.markdown(
