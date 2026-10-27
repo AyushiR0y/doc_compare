@@ -9,12 +9,11 @@
 | `comparison_core.py` | The comparison engine. Shared by the Streamlit app and the API. | Current |
 | `mis_mailer.py` | Builds and sends the MIS report. | Current |
 | `fastapi_app.py` + `frontend/` | FastAPI + React build of the same engine (Render deployment). | Parallel deployment |
-| `app.py` | The previous Streamlit app, with its own older copy of the comparison logic. | Superseded |
-
-`app.py` is left in place but is no longer the entry point. It carries a duplicate,
-older version of the diff logic, so it will not pick up engine improvements.
 
 ## Run locally
+
+See [README.md](README.md) — it covers prerequisites, the virtual environment,
+secrets and troubleshooting. The short version:
 
 ```bash
 pip install -r requirements.txt
@@ -41,7 +40,8 @@ streamlit run streamlit_app.py
    `MIS mail:` line in the app logs.
 
 `requirements.txt` is shared with the FastAPI deployment, so it also installs
-`fastapi`/`uvicorn`. They are unused by the Streamlit app and harmless.
+`fastapi`/`uvicorn`/`python-multipart`. They are unused by the Streamlit app and
+harmless; the file marks which block is which.
 
 ## The interface
 
@@ -55,9 +55,16 @@ screens and on 1366px ones at Windows 125% scaling.
 
 Streamlit cannot synchronise scrolling between two of its own containers, so
 `preview_viewer.py` renders both documents, the toolbar and all the interaction
-into a single HTML document, embedded with `st.iframe` via a `data:` URL. The
-iframe gets an opaque origin, which is why it is fully isolated from the host
-page - and why nothing outside it can read into it.
+into a single HTML document, embedded by handing the raw HTML to `st.iframe`,
+which puts it in the iframe's `srcdoc`. The iframe gets an opaque origin, which
+is why it is fully isolated from the host page - and why nothing outside it can
+read into it.
+
+> It must stay raw HTML. An earlier version base64-encoded the document into a
+> `data:` URL; Chromium caps a `data:` URL used for frame navigation at 2 MB and
+> fails silently past it, so PDF pairs - which carry every page as a base64 image -
+> rendered as a blank frame while DOCX pairs, being plain text, stayed under the
+> cap and worked. `srcdoc` has no such limit.
 
 It offers:
 

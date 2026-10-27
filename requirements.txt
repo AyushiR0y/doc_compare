@@ -1,11 +1,10 @@
-streamlit
+# Streamlit app (streamlit_app.py)
+streamlit>=1.58
 PyMuPDF
 python-docx
-pandas
-plotly
 Pillow
+
+# FastAPI + React build (fastapi_app.py + frontend/) — not needed to run Streamlit
 fastapi
 uvicorn[standard]
 python-multipart
-pywin32; platform_system == "Windows"
-aiofiles
